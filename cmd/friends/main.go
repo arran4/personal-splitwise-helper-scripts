@@ -15,23 +15,6 @@ import (
 const CacheDir = ".cache"
 const FriendsCacheFile = "friends.json"
 
-type FriendsResponse struct {
-	Friends []Friend `json:"friends"`
-}
-
-type Friend struct {
-	ID        int       `json:"id"`
-	FirstName string    `json:"first_name"`
-	LastName  string    `json:"last_name"`
-	Email     string    `json:"email"`
-	Balance   []Balance `json:"balance"`
-}
-
-type Balance struct {
-	CurrencyCode string `json:"currency_code"`
-	Amount       string `json:"amount"`
-}
-
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: friends <get|list>")
@@ -102,7 +85,7 @@ func listFriends() error {
 		return fmt.Errorf("reading cache file: %w", err)
 	}
 
-	var resp FriendsResponse
+	var resp splitwise.FriendsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return fmt.Errorf("parsing friends JSON: %w", err)
 	}

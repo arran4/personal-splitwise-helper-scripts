@@ -108,6 +108,54 @@ func TestParseDetails(t *testing.T) {
 			},
 		},
 		{
+			name: "weighted shared with is parsed",
+			details: "Taco - 9.00 (Alice*2, Bob)\n" +
+				"Tax: Alice - 0.00, Bob - 0.00\n" +
+				"Tip: Alice - 0.00, Bob - 0.00\n",
+			want: &ItemizedDetail{
+				Notes: "",
+				Items: []Item{
+					{
+						Description: "Taco",
+						Amount:      "9.00",
+						SharedWith:  []string{"Alice", "Alice", "Bob"},
+					},
+				},
+				Tax: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
+				Tip: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
+			},
+		},
+		{
+			name: "weighted dollar shared with is parsed",
+			details: "Taco - 9.00 (Alice $6.00, Bob $3.00)\n" +
+				"Tax: Alice - 0.00, Bob - 0.00\n" +
+				"Tip: Alice - 0.00, Bob - 0.00\n",
+			want: &ItemizedDetail{
+				Notes: "",
+				Items: []Item{
+					{
+						Description: "Taco",
+						Amount:      "9.00",
+						SharedWith:  append(repeatName("Alice", 600), repeatName("Bob", 300)...),
+					},
+				},
+				Tax: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
+				Tip: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
+			},
+		},
+		{
 			name: "tax and tip only",
 			details: "Tax: Alice - 2.50, Bob - 1.50\n" +
 				"Tip: Alice - 1.00, Bob - 1.00\n",
@@ -226,6 +274,39 @@ func TestSerializeDetails(t *testing.T) {
 	if got != want {
 		t.Fatalf("SerializeDetails() = %q, want %q", got, want)
 	}
+}
+
+func TestSerializeDetailsCompactsWeightedSharedWith(t *testing.T) {
+	details := &ItemizedDetail{
+		Items: []Item{
+			{Description: "12x i2", Amount: "36.00", SharedWith: []string{"Arran Ubels", "Arran Ubels", "test", "test", "test"}},
+		},
+	}
+
+	got := SerializeDetails(details)
+	want := "i2 - 14.40 (Arran Ubels)\ni2 - 21.60 (test)"
+	if got != want {
+		t.Fatalf("SerializeDetails() = %q, want %q", got, want)
+	}
+
+	roundTrip := ParseDetails(got)
+	wantRoundTrip := &ItemizedDetail{
+		Items: []Item{
+			{Description: "i2", Amount: "14.40", SharedWith: []string{"Arran Ubels"}},
+			{Description: "i2", Amount: "21.60", SharedWith: []string{"test"}},
+		},
+	}
+	if !reflect.DeepEqual(roundTrip, wantRoundTrip) {
+		t.Fatalf("ParseDetails() = %+v, want %+v", roundTrip, wantRoundTrip)
+	}
+}
+
+func repeatName(name string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = name
+	}
+	return out
 }
 
 func TestCalculateOwed(t *testing.T) {

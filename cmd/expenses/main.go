@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/arran4/personal-splitwise-helper-scripts/pkg/splitwise"
 	"github.com/arran4/personal-splitwise-helper-scripts/pkg/tui"
@@ -20,7 +21,7 @@ const CacheDir = ".cache"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: expenses <list|show|edit> [options]")
+		fmt.Println("Usage: expenses <list|show|edit|new> [options]")
 		os.Exit(1)
 	}
 
@@ -235,6 +236,54 @@ func main() {
 			}
 		}
 
+	case "new":
+		newCmd := flag.NewFlagSet("new", flag.ExitOnError)
+		groupID := newCmd.Int("group-id", 0, "Create the expense in this group")
+		friendID := newCmd.Int("friend-id", 0, "Create the expense with this friend")
+		verbose := newCmd.Bool("verbose", false, "Print the full server success payload after send")
+
+		newCmd.Parse(os.Args[2:])
+
+		if *groupID != 0 && *friendID != 0 {
+			fmt.Println("Provide only one of --group-id or --friend-id")
+			os.Exit(1)
+		}
+
+		selectedGroupID := *groupID
+		selectedFriendID := *friendID
+		if selectedGroupID == 0 && selectedFriendID == 0 {
+			var err error
+			selectedGroupID, selectedFriendID, err = chooseExpenseContext()
+			if err != nil {
+				fmt.Println("Error choosing expense context:", err)
+				os.Exit(1)
+			}
+		}
+
+		expense, err := initializeNewExpense(selectedGroupID, selectedFriendID)
+		if err != nil {
+			fmt.Println("Error creating new expense draft:", err)
+			os.Exit(1)
+		}
+
+		sent, sendResponse, err := tui.EditExpense(expense)
+		if err != nil {
+			fmt.Println("Error running TUI:", err)
+			os.Exit(1)
+		}
+		if sent {
+			if *verbose && len(sendResponse) > 0 {
+				var pretty bytes.Buffer
+				if err := json.Indent(&pretty, sendResponse, "", "  "); err == nil {
+					fmt.Println(pretty.String())
+				} else {
+					fmt.Println(string(sendResponse))
+				}
+			} else {
+				fmt.Println("success")
+			}
+		}
+
 	default:
 		fmt.Println("Unknown command:", command)
 		os.Exit(1)
@@ -247,6 +296,256 @@ func invalidateExpenseCache(id string) error {
 		return err
 	}
 	return nil
+}
+
+type expenseChoice struct {
+	label    string
+	groupID  int
+	friendID int
+}
+
+func chooseExpenseContext() (int, int, error) {
+	if err := ensureFriendsCache(); err != nil {
+		return 0, 0, err
+	}
+	if err := ensureGroupsCache(); err != nil {
+		return 0, 0, err
+	}
+
+	choices, options, footer, err := buildExpenseContextOptions()
+	if err != nil {
+		return 0, 0, err
+	}
+	selected, err := tui.SelectOption("Select Expense Context", options, footer, func() ([]tui.SelectionOption, string, error) {
+		if err := refreshFriendsCache(); err != nil {
+			return nil, "", err
+		}
+		if err := refreshGroupsCache(); err != nil {
+			return nil, "", err
+		}
+		var refreshErr error
+		choices, options, footer, refreshErr = buildExpenseContextOptions()
+		if refreshErr != nil {
+			return nil, "", refreshErr
+		}
+		return options, footer, nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+
+	choice := choices[selected]
+	return choice.groupID, choice.friendID, nil
+}
+
+func buildExpenseContextOptions() ([]expenseChoice, []tui.SelectionOption, string, error) {
+	friends, err := splitwise.GetCachedFriends(CacheDir)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	groups, err := splitwise.GetCachedGroups(CacheDir)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	var choices []expenseChoice
+	var options []tui.SelectionOption
+	for _, f := range friends {
+		name := strings.TrimSpace(strings.Join([]string{f.FirstName, f.LastName}, " "))
+		if name == "" {
+			name = f.Email
+		}
+		label := fmt.Sprintf("Friend: %s (id=%d)", name, f.ID)
+		choices = append(choices, expenseChoice{label: label, friendID: f.ID})
+		options = append(options, tui.SelectionOption{Label: label})
+	}
+	for _, g := range groups {
+		label := fmt.Sprintf("Group: %s (id=%d)", g.Name, g.ID)
+		choices = append(choices, expenseChoice{label: label, groupID: g.ID})
+		options = append(options, tui.SelectionOption{Label: label})
+	}
+	if len(options) == 0 {
+		return nil, nil, "", fmt.Errorf("no cached friends or groups available")
+	}
+	return choices, options, expenseContextFooter(), nil
+}
+
+func expenseContextFooter() string {
+	return fmt.Sprintf("Friends cache: %s\nGroups cache: %s", cacheAgeString(filepath.Join(CacheDir, "friends.json")), cacheAgeString(filepath.Join(CacheDir, "groups.json")))
+}
+
+func cacheAgeString(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "missing"
+	}
+	age := time.Since(info.ModTime()).Round(time.Second)
+	return age.String() + " old"
+}
+
+func ensureFriendsCache() error {
+	if _, err := os.Stat(filepath.Join(CacheDir, "friends.json")); os.IsNotExist(err) {
+		if err := refreshFriendsCache(); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureGroupsCache() error {
+	if _, err := os.Stat(filepath.Join(CacheDir, "groups.json")); os.IsNotExist(err) {
+		if err := refreshGroupsCache(); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+func refreshFriendsCache() error {
+	client, err := splitwise.NewClient()
+	if err != nil {
+		return fmt.Errorf("initializing client: %w", err)
+	}
+	data, err := client.GetFriends()
+	if err != nil {
+		return fmt.Errorf("fetching friends: %w", err)
+	}
+	if err := os.MkdirAll(CacheDir, 0755); err != nil {
+		return fmt.Errorf("creating cache directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(CacheDir, "friends.json"), data, 0644); err != nil {
+		return fmt.Errorf("writing friends cache: %w", err)
+	}
+	return nil
+}
+
+func refreshGroupsCache() error {
+	client, err := splitwise.NewClient()
+	if err != nil {
+		return fmt.Errorf("initializing client: %w", err)
+	}
+	data, err := client.GetGroups()
+	if err != nil {
+		return fmt.Errorf("fetching groups: %w", err)
+	}
+	if err := os.MkdirAll(CacheDir, 0755); err != nil {
+		return fmt.Errorf("creating cache directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(CacheDir, "groups.json"), data, 0644); err != nil {
+		return fmt.Errorf("writing groups cache: %w", err)
+	}
+	return nil
+}
+
+func initializeNewExpense(groupID, friendID int) (*splitwise.DetailedExpense, error) {
+	if _, err := os.Stat(filepath.Join(CacheDir, "current_user.json")); os.IsNotExist(err) {
+		if err := fetchCurrentUser(); err != nil {
+			return nil, err
+		}
+	}
+	currentUser, err := splitwise.GetCachedCurrentUser(CacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading cached current user: %w", err)
+	}
+
+	expense := &splitwise.DetailedExpense{
+		Description:  "",
+		Cost:         "0.00",
+		CurrencyCode: currentUser.DefaultCurrency,
+		Date:         time.Now().Format("2006-01-02"),
+		GroupID:      groupID,
+	}
+	if expense.CurrencyCode == "" {
+		expense.CurrencyCode = "AUD"
+	}
+
+	addUser := func(id int, firstName, lastName string) {
+		var lastNamePtr *string
+		if lastName != "" {
+			lastNameValue := lastName
+			lastNamePtr = &lastNameValue
+		}
+		expense.Users = append(expense.Users, splitwise.ExpenseUser{
+			UserID: id,
+			User: splitwise.User{
+				ID:        id,
+				FirstName: firstName,
+				LastName:  lastNamePtr,
+			},
+			PaidShare: "0.00",
+			OwedShare: "0.00",
+		})
+	}
+
+	addUser(currentUser.ID, currentUser.FirstName, currentUser.LastName)
+
+	if friendID != 0 {
+		if err := ensureFriendsCache(); err != nil {
+			return nil, err
+		}
+		friends, err := splitwise.GetCachedFriends(CacheDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range friends {
+			if f.ID == friendID {
+				addUser(f.ID, f.FirstName, f.LastName)
+				return expense, nil
+			}
+		}
+		return nil, fmt.Errorf("friend %d not found", friendID)
+	}
+
+	if groupID != 0 {
+		if err := ensureGroupsCache(); err != nil {
+			return nil, err
+		}
+		groups, err := splitwise.GetCachedGroups(CacheDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range groups {
+			if g.ID != groupID {
+				continue
+			}
+			expense.Description = g.Name
+			foundCurrent := false
+			expense.Users = expense.Users[:0]
+			for _, m := range g.Members {
+				if m.ID == currentUser.ID {
+					foundCurrent = true
+				}
+				addUser(m.ID, m.FirstName, m.LastName)
+			}
+			if !foundCurrent {
+				expense.Users = append([]splitwise.ExpenseUser{{
+					UserID: currentUser.ID,
+					User: splitwise.User{
+						ID:        currentUser.ID,
+						FirstName: currentUser.FirstName,
+						LastName:  stringPtrOrNil(currentUser.LastName),
+					},
+					PaidShare: "0.00",
+					OwedShare: "0.00",
+				}}, expense.Users...)
+			}
+			return expense, nil
+		}
+		return nil, fmt.Errorf("group %d not found", groupID)
+	}
+
+	return expense, nil
+}
+
+func stringPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	v := s
+	return &v
 }
 
 func fetchExpense(id string, refresh bool) (*splitwise.ExpenseResponse, error) {

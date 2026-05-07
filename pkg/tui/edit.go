@@ -221,6 +221,39 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 		}
 		return sharedWith
 	}
+	itemParticipantAmounts := func(item splitwise.Item) (float64, float64, int, int, int) {
+		totalAmount, _ := strconv.ParseFloat(item.Amount, 64)
+		p1Weight := 0
+		p2Weight := 0
+		for _, person := range item.SharedWith {
+			switch person {
+			case p1:
+				p1Weight++
+			case p2:
+				p2Weight++
+			}
+		}
+		totalWeight := p1Weight + p2Weight
+		if totalWeight == 0 {
+			return 0, 0, 0, 0, 0
+		}
+		p1Amount := totalAmount * float64(p1Weight) / float64(totalWeight)
+		p2Amount := totalAmount - p1Amount
+		return p1Amount, p2Amount, p1Weight, p2Weight, totalWeight
+	}
+	reduceRatio := func(a, b int) (int, int) {
+		if a == 0 || b == 0 {
+			return a, b
+		}
+		gcd := func(x, y int) int {
+			for y != 0 {
+				x, y = y, x%y
+			}
+			return x
+		}
+		d := gcd(a, b)
+		return a / d, b / d
+	}
 	buildCurrentExpenseState := func() splitwise.DetailedExpense {
 		current := *expense
 		current.Users = append([]splitwise.ExpenseUser(nil), expense.Users...)
@@ -267,7 +300,12 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			showMessageModal("Send Error", err.Error())
 			return
 		}
-		response, err := client.UpdateExpense(&current)
+		var response []byte
+		if current.ID == 0 {
+			response, err = client.CreateExpense(&current)
+		} else {
+			response, err = client.UpdateExpense(&current)
+		}
 		if err != nil {
 			showMessageModal("Send Error", err.Error())
 			return
@@ -520,7 +558,17 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 						}, func() { app.SetFocus(list) })
 					})
 					list.AddItem("Different % owed", "Prompt for percentage", '5', func() {
-						showPromptForm("Percentage Split", []string{"% owed by " + p1, "% owed by " + p2}, nil, func(vals []string) bool {
+						p1Amount, _, _, _, totalWeight := itemParticipantAmounts(*itemPtr)
+						totalAmount, _ := strconv.ParseFloat(itemPtr.Amount, 64)
+						p1InitialPct := "0.00"
+						p2InitialPct := "0.00"
+						if totalAmount > 0 && totalWeight > 0 {
+							p1Pct := math.Round((p1Amount/totalAmount)*10000) / 100
+							p2Pct := math.Round((100-p1Pct)*100) / 100
+							p1InitialPct = fmt.Sprintf("%.2f", p1Pct)
+							p2InitialPct = fmt.Sprintf("%.2f", p2Pct)
+						}
+						showPromptForm("Percentage Split", []string{"% owed by " + p1, "% owed by " + p2}, []string{p1InitialPct, p2InitialPct}, func(vals []string) bool {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {
@@ -574,7 +622,15 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 						}, func() { app.SetFocus(list) })
 					})
 					list.AddItem("Shares owed", "Prompt for shares", '6', func() {
-						showPromptForm("Shares Split", []string{"Shares owed by " + p1, "Shares owed by " + p2}, nil, func(vals []string) bool {
+						_, _, p1Weight, p2Weight, totalWeight := itemParticipantAmounts(*itemPtr)
+						p1SharesInit := ""
+						p2SharesInit := ""
+						if totalWeight > 0 {
+							p1Reduced, p2Reduced := reduceRatio(p1Weight, p2Weight)
+							p1SharesInit = strconv.Itoa(p1Reduced)
+							p2SharesInit = strconv.Itoa(p2Reduced)
+						}
+						showPromptForm("Shares Split", []string{"Shares owed by " + p1, "Shares owed by " + p2}, []string{p1SharesInit, p2SharesInit}, func(vals []string) bool {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {
@@ -620,7 +676,14 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 						}, func() { app.SetFocus(list) })
 					})
 					list.AddItem("Exact amounts owed", "Prompt for exact amounts", '7', func() {
-						showPromptForm("Exact Amounts", []string{"Amount owed by " + p1, "Amount owed by " + p2}, nil, func(vals []string) bool {
+						p1Amount, p2Amount, _, _, totalWeight := itemParticipantAmounts(*itemPtr)
+						p1AmountInit := ""
+						p2AmountInit := ""
+						if totalWeight > 0 {
+							p1AmountInit = formatMoney(p1Amount)
+							p2AmountInit = formatMoney(p2Amount)
+						}
+						showPromptForm("Exact Amounts", []string{"Amount owed by " + p1, "Amount owed by " + p2}, []string{p1AmountInit, p2AmountInit}, func(vals []string) bool {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {

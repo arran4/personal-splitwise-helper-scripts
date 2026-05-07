@@ -116,7 +116,7 @@ func SerializeDetails(details *ItemizedDetail) string {
 
 	var lines []string
 	for _, item := range details.Items {
-		lines = append(lines, fmt.Sprintf("%s - %s (%s)", strings.TrimSpace(item.Description), strings.TrimSpace(item.Amount), strings.Join(item.SharedWith, ", ")))
+		lines = append(lines, serializeItemLines(item)...)
 	}
 	if len(details.Tax) > 0 {
 		lines = append(lines, "Tax: "+serializePersonAmounts(details.Tax))
@@ -209,7 +209,7 @@ func ParseDetails(details string) *ItemizedDetail {
 				}
 				amount := amountAndPeople[0]
 				peopleStr := strings.TrimSuffix(amountAndPeople[1], ")")
-				people := strings.Split(peopleStr, ", ")
+				people := parseSharedWith(peopleStr, strings.TrimSpace(amount))
 
 				result.Items = append(result.Items, Item{
 					Description: strings.TrimSpace(desc),
@@ -265,6 +265,155 @@ func serializePersonAmounts(amounts []PersonAmount) string {
 		parts = append(parts, fmt.Sprintf("%s - %s", strings.TrimSpace(amount.Name), strings.TrimSpace(amount.Amount)))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func parseSharedWith(s, amount string) []string {
+	totalAmount, _ := strconv.ParseFloat(strings.TrimSpace(amount), 64)
+	totalCents := int(math.Round(totalAmount * 100))
+	if totalCents > 0 {
+		if weighted := parseWeightedAmountsSharedWith(s, totalCents); len(weighted) > 0 {
+			return weighted
+		}
+	}
+
+	var people []string
+	for _, rawPart := range strings.Split(s, ",") {
+		part := strings.TrimSpace(rawPart)
+		if part == "" {
+			continue
+		}
+
+		name := part
+		count := 1
+		if idx := strings.LastIndex(part, "*"); idx > 0 {
+			if parsedCount, err := strconv.Atoi(strings.TrimSpace(part[idx+1:])); err == nil && parsedCount > 0 {
+				name = strings.TrimSpace(part[:idx])
+				count = parsedCount
+			}
+		}
+		for i := 0; i < count; i++ {
+			people = append(people, name)
+		}
+	}
+	return people
+}
+
+func parseWeightedAmountsSharedWith(s string, totalCents int) []string {
+	var order []string
+	amounts := make(map[string]int)
+	consumed := 0
+	for _, rawPart := range strings.Split(s, ",") {
+		part := strings.TrimSpace(rawPart)
+		if part == "" {
+			continue
+		}
+		idx := strings.LastIndex(part, " $")
+		if idx <= 0 {
+			return nil
+		}
+		name := strings.TrimSpace(part[:idx])
+		value := strings.TrimSpace(part[idx+2:])
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || parsed < 0 {
+			return nil
+		}
+		cents := int(math.Round(parsed * 100))
+		if _, ok := amounts[name]; !ok {
+			order = append(order, name)
+		}
+		amounts[name] += cents
+		consumed += cents
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	if consumed != totalCents {
+		diff := totalCents - consumed
+		amounts[order[len(order)-1]] += diff
+	}
+
+	var people []string
+	for _, name := range order {
+		for i := 0; i < amounts[name]; i++ {
+			people = append(people, name)
+		}
+	}
+	return people
+}
+
+func serializeSharedWith(sharedWith []string, totalAmount float64, qty int) string {
+	counts := make(map[string]int)
+	var ordered []string
+	for _, person := range sharedWith {
+		if counts[person] == 0 {
+			ordered = append(ordered, person)
+		}
+		counts[person]++
+	}
+
+	var parts []string
+	if len(sharedWith) == qty {
+		for _, person := range ordered {
+			if counts[person] > 1 {
+				parts = append(parts, fmt.Sprintf("%s*%d", person, counts[person]))
+				continue
+			}
+			parts = append(parts, person)
+		}
+		return strings.Join(parts, ", ")
+	}
+
+	if len(sharedWith) == 0 {
+		return ""
+	}
+	shareValue := totalAmount / float64(len(sharedWith))
+	for _, person := range ordered {
+		parts = append(parts, fmt.Sprintf("%s $%.2f", person, shareValue*float64(counts[person])))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func serializeItemLines(item Item) []string {
+	description := strings.TrimSpace(item.Description)
+	amount := strings.TrimSpace(item.Amount)
+	totalAmount, _ := strconv.ParseFloat(amount, 64)
+	qty, baseDesc := ParseItemDescription(description)
+
+	if len(item.SharedWith) == 0 {
+		return []string{fmt.Sprintf("%s - %s ()", description, amount)}
+	}
+
+	counts := make(map[string]int)
+	var ordered []string
+	for _, person := range item.SharedWith {
+		if counts[person] == 0 {
+			ordered = append(ordered, person)
+		}
+		counts[person]++
+	}
+
+	if len(ordered) == len(item.SharedWith) {
+		return []string{fmt.Sprintf("%s - %s (%s)", description, amount, strings.Join(ordered, ", "))}
+	}
+
+	if len(item.SharedWith) == qty {
+		var lines []string
+		for _, person := range ordered {
+			personQty := counts[person]
+			personDesc := FormatItemDescription(personQty, baseDesc)
+			personAmount := totalAmount * float64(personQty) / float64(qty)
+			lines = append(lines, fmt.Sprintf("%s - %.2f (%s)", personDesc, personAmount, person))
+		}
+		return lines
+	}
+
+	weightTotal := len(item.SharedWith)
+	var lines []string
+	for _, person := range ordered {
+		personAmount := totalAmount * float64(counts[person]) / float64(weightTotal)
+		lines = append(lines, fmt.Sprintf("%s - %.2f (%s)", baseDesc, personAmount, person))
+	}
+	return lines
 }
 
 // CalculateOwed amounts based on ItemizedDetail and list of Users.
