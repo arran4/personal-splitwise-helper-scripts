@@ -54,3 +54,7 @@ func (c *Client) GetExpenses(query string) ([]byte, error) {
 	}
 	return c.doRequest("GET", endpoint, nil)
 }
+
+func (c *Client) GetExpense(id string) ([]byte, error) {
+	return c.doRequest("GET", fmt.Sprintf("/get_expense/%s", id), nil)
+}
