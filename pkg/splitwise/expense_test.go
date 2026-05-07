@@ -205,6 +205,29 @@ func TestParseAndFormatItemDescription(t *testing.T) {
 	}
 }
 
+func TestSerializeDetails(t *testing.T) {
+	details := &ItemizedDetail{
+		Notes: "Trip notes",
+		Items: []Item{
+			{Description: "2x Taco", Amount: "9.00", SharedWith: []string{"Alice", "Bob"}},
+		},
+		Tax: []PersonAmount{
+			{Name: "Alice", Amount: "1.00"},
+			{Name: "Bob", Amount: "1.00"},
+		},
+		Tip: []PersonAmount{
+			{Name: "Alice", Amount: "0.50"},
+			{Name: "Bob", Amount: "0.50"},
+		},
+	}
+
+	got := SerializeDetails(details)
+	want := "Trip notes\n\n2x Taco - 9.00 (Alice, Bob)\nTax: Alice - 1.00, Bob - 1.00\nTip: Alice - 0.50, Bob - 0.50"
+	if got != want {
+		t.Fatalf("SerializeDetails() = %q, want %q", got, want)
+	}
+}
+
 func TestCalculateOwed(t *testing.T) {
 	tests := []struct {
 		name     string

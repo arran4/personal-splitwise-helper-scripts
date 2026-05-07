@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -11,8 +15,9 @@ import (
 	"github.com/rivo/tview"
 )
 
-func EditExpense(expense *splitwise.DetailedExpense) error {
+func EditExpense(expense *splitwise.DetailedExpense) (bool, error) {
 	app := tview.NewApplication()
+	sent := false
 
 	// Title
 	title := tview.NewTextView().
@@ -73,16 +78,6 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 	leftFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(form, 0, 1, true)
 
-	// Action Buttons at the bottom
-	actionButtons := tview.NewForm()
-	actionButtons.AddButton("Save (Not Implemented)", func() {
-		app.Stop()
-	}).
-		AddButton("Quit", func() {
-			app.Stop()
-		})
-	actionButtons.SetButtonsAlign(tview.AlignCenter)
-
 	// Items Table
 	itemsTable := tview.NewTable().
 		SetBorders(false).
@@ -94,6 +89,49 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 	var pages *tview.Pages // Initialize below
 	isModalOpen := false
 	var focusBeforeModal tview.Primitive
+	showMessageModal := func(title, message string) {
+		previousFocus := app.GetFocus()
+		isModalOpen = true
+		modal := tview.NewModal().
+			SetText(message).
+			AddButtons([]string{"Close"}).
+			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+				pages.RemovePage("message_modal")
+				isModalOpen = false
+				app.SetFocus(previousFocus)
+			})
+		modal.SetTitle(title)
+		pages.AddPage("message_modal", modal, true, true)
+		app.SetFocus(modal)
+	}
+	showTextModal := func(title, content string) {
+		previousFocus := app.GetFocus()
+		isModalOpen = true
+		textView := tview.NewTextView().
+			SetText(content).
+			SetDynamicColors(true).
+			SetScrollable(true).
+			SetWrap(false)
+		textView.SetBorder(true).SetTitle(title)
+		closeModal := func() {
+			pages.RemovePage("text_modal")
+			isModalOpen = false
+			app.SetFocus(previousFocus)
+		}
+		textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyEnter {
+				closeModal()
+				return nil
+			}
+			return event
+		})
+		modal := tview.NewFlex().
+			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(textView, 0, 1, true).
+				AddItem(nil, 0, 0, false), 0, 1, true)
+		pages.AddPage("text_modal", modal, true, true)
+		app.SetFocus(textView)
+	}
 
 	showPromptForm := func(promptTitle string, fields []string, initialValues []string, onSubmit func(values []string) bool, onCancel func()) {
 		promptForm := tview.NewForm()
@@ -182,6 +220,106 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 		}
 		return sharedWith
 	}
+	buildCurrentExpenseState := func() splitwise.DetailedExpense {
+		current := *expense
+		current.Users = append([]splitwise.ExpenseUser(nil), expense.Users...)
+		current.Details = splitwise.SerializeDetails(parsedDetails)
+		return current
+	}
+	currentStateJSON := func() ([]byte, error) {
+		current := buildCurrentExpenseState()
+		return json.MarshalIndent(current, "", "  ")
+	}
+	receiptImageURLs := func() []string {
+		seen := make(map[string]bool)
+		var urls []string
+		collect := func(v interface{}) {
+			if s, ok := v.(string); ok && s != "" && !seen[s] {
+				seen[s] = true
+				urls = append(urls, s)
+			}
+		}
+		collect(expense.Receipt.Original)
+		collect(expense.Receipt.Large)
+		return urls
+	}
+	openURL := func(target string) error {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", target)
+		case "windows":
+			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
+		default:
+			cmd = exec.Command("xdg-open", target)
+		}
+		return cmd.Start()
+	}
+
+	// Action Buttons at the bottom
+	actionButtons := tview.NewForm()
+	actionButtons.AddButton("Send", func() {
+		focusBeforeModal = actionButtons
+		current := buildCurrentExpenseState()
+		client, err := splitwise.NewClient()
+		if err != nil {
+			showMessageModal("Send Error", err.Error())
+			return
+		}
+		if _, err := client.UpdateExpense(&current); err != nil {
+			showMessageModal("Send Error", err.Error())
+			return
+		}
+		*expense = current
+		sent = true
+		app.Stop()
+	}).AddButton("Quit", func() {
+		app.Stop()
+	})
+	if len(receiptImageURLs()) > 0 {
+		actionButtons.AddButton("View Image(s)", func() {
+			focusBeforeModal = actionButtons
+			urls := receiptImageURLs()
+			for _, u := range urls {
+				if err := openURL(u); err != nil {
+					showMessageModal("Image Error", err.Error())
+					return
+				}
+			}
+		})
+	}
+	actionButtons.AddButton("View Raw JSON", func() {
+		focusBeforeModal = actionButtons
+		data, err := currentStateJSON()
+		if err != nil {
+			showMessageModal("JSON Error", err.Error())
+			return
+		}
+		showTextModal("Current State JSON", string(data))
+	}).AddButton("Export Raw JSON", func() {
+		focusBeforeModal = actionButtons
+		defaultPath := fmt.Sprintf("expense_%d_current.json", expense.ID)
+		showPromptForm("Export Raw JSON", []string{"File Path"}, []string{defaultPath}, func(vals []string) bool {
+			target := strings.TrimSpace(vals[0])
+			if target == "" {
+				return false
+			}
+			data, err := currentStateJSON()
+			if err != nil {
+				showMessageModal("Export Error", err.Error())
+				return false
+			}
+			if err := os.WriteFile(target, data, 0644); err != nil {
+				showMessageModal("Export Error", err.Error())
+				return false
+			}
+			showMessageModal("Exported", fmt.Sprintf("Wrote current state to %s", target))
+			return true
+		}, func() {
+			app.SetFocus(actionButtons)
+		})
+	})
+	actionButtons.SetButtonsAlign(tview.AlignCenter)
 
 	refreshItemsTable = func() {
 		calculatedTotal := calculateDetailsTotal()
@@ -951,8 +1089,8 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 	})
 
 	if err := app.SetRoot(pages, true).SetFocus(focusables[0]).Run(); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return sent, nil
 }

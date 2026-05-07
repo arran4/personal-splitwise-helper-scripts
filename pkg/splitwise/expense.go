@@ -109,6 +109,34 @@ type PersonAmount struct {
 	Amount string
 }
 
+func SerializeDetails(details *ItemizedDetail) string {
+	if details == nil {
+		return ""
+	}
+
+	var lines []string
+	for _, item := range details.Items {
+		lines = append(lines, fmt.Sprintf("%s - %s (%s)", strings.TrimSpace(item.Description), strings.TrimSpace(item.Amount), strings.Join(item.SharedWith, ", ")))
+	}
+	if len(details.Tax) > 0 {
+		lines = append(lines, "Tax: "+serializePersonAmounts(details.Tax))
+	}
+	if len(details.Tip) > 0 {
+		lines = append(lines, "Tip: "+serializePersonAmounts(details.Tip))
+	}
+
+	notes := strings.TrimSpace(details.Notes)
+	itemsBlock := strings.Join(lines, "\n")
+	switch {
+	case notes != "" && itemsBlock != "":
+		return notes + "\n\n" + itemsBlock
+	case notes != "":
+		return notes
+	default:
+		return itemsBlock
+	}
+}
+
 func ParseItemDescription(description string) (int, string) {
 	qty := 1
 	desc := strings.TrimSpace(description)
@@ -229,6 +257,14 @@ func parsePersonAmounts(s string) []PersonAmount {
 		}
 	}
 	return amounts
+}
+
+func serializePersonAmounts(amounts []PersonAmount) string {
+	var parts []string
+	for _, amount := range amounts {
+		parts = append(parts, fmt.Sprintf("%s - %s", strings.TrimSpace(amount.Name), strings.TrimSpace(amount.Amount)))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // CalculateOwed amounts based on ItemizedDetail and list of Users.

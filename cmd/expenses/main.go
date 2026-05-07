@@ -212,15 +212,30 @@ func main() {
 			}
 		}
 
-		if err := tui.EditExpense(&resp.Expense); err != nil {
+		sent, err := tui.EditExpense(&resp.Expense)
+		if err != nil {
 			fmt.Println("Error running TUI:", err)
 			os.Exit(1)
+		}
+		if sent {
+			if err := invalidateExpenseCache(*id); err != nil {
+				fmt.Println("Warning: could not invalidate cache:", err)
+			}
+			fmt.Println("success")
 		}
 
 	default:
 		fmt.Println("Unknown command:", command)
 		os.Exit(1)
 	}
+}
+
+func invalidateExpenseCache(id string) error {
+	cacheFile := filepath.Join(CacheDir, fmt.Sprintf("expense_%s.json", id))
+	if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func fetchExpense(id string, refresh bool) (*splitwise.ExpenseResponse, error) {

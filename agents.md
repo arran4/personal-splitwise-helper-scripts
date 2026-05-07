@@ -6,3 +6,4 @@
 - When creating tools, place them in `cmd/<tool>`.
 - Use `.cache/` directory to store temporary or pulled API data.
 - When retrieving from cache, always output the last modified date of the cache file.
+- After any successful mutation of cached upstream state, invalidate or refresh the relevant `.cache/` entries so stale data is not reused.
