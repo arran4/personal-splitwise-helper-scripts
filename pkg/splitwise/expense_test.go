@@ -47,9 +47,11 @@ func TestParseDetails(t *testing.T) {
 			},
 		},
 		{
-			name: "items only",
+			name: "items only with compulsory tax and tip",
 			details: "Burger - 15.00 (Alice, Bob)\n" +
-				"Fries - 5.00 (Alice)\n",
+				"Fries - 5.00 (Alice)\n" +
+				"Tax: Alice - 0.00, Bob - 0.00\n" +
+				"Tip: Alice - 0.00, Bob - 0.00\n",
 			want: &ItemizedDetail{
 				Notes: "",
 				Items: []Item{
@@ -63,6 +65,14 @@ func TestParseDetails(t *testing.T) {
 						Amount:      "5.00",
 						SharedWith:  []string{"Alice"},
 					},
+				},
+				Tax: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
+				Tip: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
 				},
 			},
 		},
@@ -70,7 +80,9 @@ func TestParseDetails(t *testing.T) {
 			name: "invalid line skipped",
 			details: "Burger - 15.00 (Alice, Bob)\n" +
 				"Invalid Line Without Correct Format\n" +
-				"Fries - 5.00 (Alice)\n",
+				"Fries - 5.00 (Alice)\n" +
+				"Tax: Alice - 0.00, Bob - 0.00\n" +
+				"Tip: Alice - 0.00, Bob - 0.00\n",
 			want: &ItemizedDetail{
 				Notes: "",
 				Items: []Item{
@@ -85,16 +97,29 @@ func TestParseDetails(t *testing.T) {
 						SharedWith:  []string{"Alice"},
 					},
 				},
+				Tax: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
+				Tip: []PersonAmount{
+					{Name: "Alice", Amount: "0.00"},
+					{Name: "Bob", Amount: "0.00"},
+				},
 			},
 		},
 		{
-			name:    "tax only",
-			details: "Tax: Alice - 2.50, Bob - 1.50\n",
+			name: "tax and tip only",
+			details: "Tax: Alice - 2.50, Bob - 1.50\n" +
+				"Tip: Alice - 1.00, Bob - 1.00\n",
 			want: &ItemizedDetail{
 				Notes: "",
 				Tax: []PersonAmount{
 					{Name: "Alice", Amount: "2.50"},
 					{Name: "Bob", Amount: "1.50"},
+				},
+				Tip: []PersonAmount{
+					{Name: "Alice", Amount: "1.00"},
+					{Name: "Bob", Amount: "1.00"},
 				},
 			},
 		},
