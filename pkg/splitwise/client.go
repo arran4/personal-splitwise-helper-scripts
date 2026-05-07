@@ -46,3 +46,11 @@ func (c *Client) doRequest(method, endpoint string, body io.Reader) ([]byte, err
 func (c *Client) GetFriends() ([]byte, error) {
 	return c.doRequest("GET", "/get_friends", nil)
 }
+
+func (c *Client) GetExpenses(query string) ([]byte, error) {
+	endpoint := "/get_expenses"
+	if query != "" {
+		endpoint += "?" + query
+	}
+	return c.doRequest("GET", endpoint, nil)
+}
