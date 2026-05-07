@@ -165,3 +165,76 @@ between 12:00 pm - 01:00 pm`
 		t.Fatalf("Notes = %q, want %q", parsed.Notes, expectedNotes)
 	}
 }
+
+func TestParseWoolworthsEmailTextOlderStyleDeliveryOrder(t *testing.T) {
+	text := `Delivery
+
+Order number: 285031025
+
+Unit 1 123 Example Street, Example 3000
+
+Sunday, 28 December 2025
+between 4:00 pm - 5:00 pm
+
+Leave order unattended:
+
+Yes
+
+Notes for the driver:
+
+"leave outside front door and ring door bell please"
+
+To make changes to your order follow the link below.
+Make changes to my order Track my order
+Helpful tips for Delivery
+
+Just a heads up
+Your order includes chilled items that may spoil if left unattended.
+
+Your Items
+
+Your Woolworths items invoice will be available once your order has been picked.
+
+This is not a tax invoice. View in My Orders.
+Item description Unit price Qty Price
+Woolworths items
+Red Rock Deli Potato Chips Sea Salt Natural 3.00 1.00 3.00
+Lyndale 12 Gippsland's Own Jumbo Cage Free Eggs 6.60 2.00 13.20
+Beans Round 6.90 0.25 1.73
+Tidbit Foods Prosciutto Di Parma 10.00 2.00 20.00
+Subtotal: 37.93
+Delivery fee: 0.00
+Paper bags: 2.00
+Estimated amount to be charged: 39.93
+Paid with Credit Card: 39.93
+Olive Got a question about your order?`
+
+	parsed, err := ParseWoolworthsEmailText(text)
+	if err != nil {
+		t.Fatalf("ParseWoolworthsEmailText() unexpected error: %v", err)
+	}
+	if parsed.Merchant != "Woolworths Order #285031025" {
+		t.Fatalf("Merchant = %q, want %q", parsed.Merchant, "Woolworths Order #285031025")
+	}
+	if parsed.Total != "39.93" {
+		t.Fatalf("Total = %q, want %q", parsed.Total, "39.93")
+	}
+	assertParsedLineItemsEqual(t, parsed.Items, []ParsedLineItem{
+		{Description: "Beans Round", Extra: "Unit price: 6.90\nQty: 0.25", Quantity: 1, Amount: "1.73"},
+		{Description: "Lyndale 12 Gippsland's Own Jumbo Cage Free Eggs", Extra: "", Quantity: 2, Amount: "13.20"},
+		{Description: "Red Rock Deli Potato Chips Sea Salt Natural", Extra: "", Quantity: 1, Amount: "3.00"},
+		{Description: "Tidbit Foods Prosciutto Di Parma", Extra: "", Quantity: 2, Amount: "20.00"},
+	})
+	if len(parsed.Fees) != 1 || parsed.Fees[0].Description != "Paper Bags" || parsed.Fees[0].Amount != "2.00" {
+		t.Fatalf("fees = %+v", parsed.Fees)
+	}
+	expectedNotes := `Imported from Woolworths email text
+Order Number: 285031025
+Delivery: Unit 1 123 Example Street, Example 3000
+Sunday, 28 December 2025
+between 4:00 pm - 5:00 pm`
+	if parsed.Notes != expectedNotes {
+		t.Fatalf("Notes = %q, want %q", parsed.Notes, expectedNotes)
+	}
+	assertTotalsMatch(t, parsed)
+}
