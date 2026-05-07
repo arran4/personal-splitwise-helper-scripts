@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -25,13 +26,27 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 	}
 	notesText := parsedDetails.Notes
 
-	// Ensure currency defaults to AUD if not set, though it should be pulled from User
+	// Ensure currency defaults to AUD if not set
 	if expense.CurrencyCode == "" {
 		expense.CurrencyCode = "AUD"
 
 		currentUser, err := splitwise.GetCachedCurrentUser(".cache")
 		if err == nil && currentUser.DefaultCurrency != "" {
 			expense.CurrencyCode = currentUser.DefaultCurrency
+		}
+	}
+
+	var p1, p2 string = "P1", "P2"
+	for i, eu := range expense.Users {
+		lastName := ""
+		if eu.User.LastName != nil {
+			lastName = *eu.User.LastName
+		}
+		name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
+		if i == 0 {
+			p1 = name
+		} else if i == 1 {
+			p2 = name
 		}
 	}
 
@@ -55,90 +70,8 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 	form.SetBorder(true).SetTitle("Basic Info").SetTitleAlign(tview.AlignLeft)
 
-	// Split amounts table (Paid/Owed balances) - Moved to left pane
-	splitTable := tview.NewTable().
-		SetBorders(true).
-		SetSelectable(true, false).
-		SetFixed(1, 0)
-
-	splitTable.SetBorder(true).SetTitle("Amounts Paid").SetTitleAlign(tview.AlignLeft)
-
-	splitTable.SetCell(0, 0, tview.NewTableCell("User").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter).SetExpansion(1))
-	splitTable.SetCell(0, 1, tview.NewTableCell("Paid").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter).SetExpansion(1))
-	splitTable.SetCell(0, 2, tview.NewTableCell("Owed").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter).SetExpansion(1))
-
-	var p1, p2 string = "P1", "P2"
-	userMap := make(map[string]*splitwise.ExpenseUser)
-	for i, eu := range expense.Users {
-		lastName := ""
-		if eu.User.LastName != nil {
-			lastName = *eu.User.LastName
-		}
-		name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
-		userMap[name] = &expense.Users[i]
-
-		if i == 0 {
-			p1 = name
-		} else if i == 1 {
-			p2 = name
-		}
-	}
-
-	refreshSplitTable := func() {
-		// Recalculate owed amounts
-		for _, eu := range expense.Users {
-			eu.OwedShare = "0.00"
-		}
-
-		for _, item := range parsedDetails.Items {
-			cost, _ := strconv.ParseFloat(item.Amount, 64)
-			splitAmt := cost / float64(len(item.SharedWith))
-			for _, personName := range item.SharedWith {
-				if user, ok := userMap[personName]; ok {
-					currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
-					user.OwedShare = fmt.Sprintf("%.2f", currentOwed+splitAmt)
-				}
-			}
-		}
-
-		for _, item := range parsedDetails.Tax {
-			if user, ok := userMap[item.Name]; ok {
-				cost, _ := strconv.ParseFloat(item.Amount, 64)
-				currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
-				user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
-			}
-		}
-
-		for _, item := range parsedDetails.Tip {
-			if user, ok := userMap[item.Name]; ok {
-				cost, _ := strconv.ParseFloat(item.Amount, 64)
-				currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
-				user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
-			}
-		}
-
-		// Update table
-		for row, eu := range expense.Users {
-			lastName := ""
-			if eu.User.LastName != nil {
-				lastName = *eu.User.LastName
-			}
-			name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
-
-			paid, _ := strconv.ParseFloat(eu.PaidShare, 64)
-			owed, _ := strconv.ParseFloat(eu.OwedShare, 64)
-			net := paid - owed
-
-			splitTable.SetCell(row+1, 0, tview.NewTableCell(name).SetAlign(tview.AlignLeft))
-			splitTable.SetCell(row+1, 1, tview.NewTableCell(eu.PaidShare).SetAlign(tview.AlignRight))
-			splitTable.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%.2f", owed)).SetAlign(tview.AlignRight))
-			splitTable.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%.2f", net)).SetAlign(tview.AlignRight))
-		}
-	}
-
 	leftFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(form, 0, 2, true).
-		AddItem(splitTable, 0, 1, false)
+		AddItem(form, 0, 1, true)
 
 	// Action Buttons at the bottom
 	actionButtons := tview.NewForm()
@@ -156,136 +89,13 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 		SetSelectable(true, false).
 		SetFixed(1, 0)
 
-	itemsTable.SetBorder(true).SetTitle("Items & Splits (Press Enter on an item)").SetTitleAlign(tview.AlignLeft)
-
-	refreshItemsTable := func() {
-		itemsTable.Clear()
-		itemsTable.SetCell(0, 0, tview.NewTableCell("Qty").SetSelectable(false).SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
-		itemsTable.SetCell(0, 1, tview.NewTableCell("Description").SetSelectable(false).SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignLeft).SetExpansion(1))
-		itemsTable.SetCell(0, 2, tview.NewTableCell("Amount").SetSelectable(false).SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(0, 3, tview.NewTableCell("Shared With (Splits)").SetSelectable(false).SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignLeft).SetExpansion(2))
-
-		itemsTable.SetCell(1, 0, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(1, 1, tview.NewTableCell("[ Add Item ]").SetSelectable(true).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignLeft))
-		itemsTable.SetCell(1, 2, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(1, 3, tview.NewTableCell("").SetSelectable(false))
-
-		row := 2
-		var subtotal float64
-		for _, item := range parsedDetails.Items {
-			qty := "1"
-			desc := item.Description
-			if parts := strings.SplitN(desc, "x ", 2); len(parts) == 2 {
-				if _, err := strconv.Atoi(parts[0]); err == nil {
-					qty = parts[0]
-					desc = parts[1]
-				}
-			}
-
-			cost, _ := strconv.ParseFloat(item.Amount, 64)
-			subtotal += cost
-
-			sharedWithStr := ""
-			if len(item.SharedWith) > 0 {
-				splitAmt := cost / float64(len(item.SharedWith))
-				var shares []string
-				for _, person := range item.SharedWith {
-					shares = append(shares, fmt.Sprintf("%s (%.2f)", person, splitAmt))
-				}
-				sharedWithStr = strings.Join(shares, ", ")
-			}
-
-			itemsTable.SetCell(row, 0, tview.NewTableCell(qty).SetAlign(tview.AlignCenter))
-			itemsTable.SetCell(row, 1, tview.NewTableCell(desc).SetAlign(tview.AlignLeft))
-			itemsTable.SetCell(row, 2, tview.NewTableCell(item.Amount).SetAlign(tview.AlignRight))
-			itemsTable.SetCell(row, 3, tview.NewTableCell(sharedWithStr).SetAlign(tview.AlignLeft))
-			row++
-		}
-
-		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 1, tview.NewTableCell("---").SetSelectable(false))
-		itemsTable.SetCell(row, 2, tview.NewTableCell("---").SetSelectable(false))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
-		row++
-
-		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 1, tview.NewTableCell("Subtotal").SetSelectable(false).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", subtotal)).SetSelectable(false).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
-		row++
-
-		var taxTotal, tipTotal float64
-		for _, t := range parsedDetails.Tax {
-			amt, _ := strconv.ParseFloat(t.Amount, 64)
-			taxTotal += amt
-		}
-		for _, t := range parsedDetails.Tip {
-			amt, _ := strconv.ParseFloat(t.Amount, 64)
-			tipTotal += amt
-		}
-
-		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 1, tview.NewTableCell("Tax").SetSelectable(false).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", taxTotal)).SetSelectable(false).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
-		row++
-
-		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 1, tview.NewTableCell("Tip").SetSelectable(false).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", tipTotal)).SetSelectable(false).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
-		row++
-
-		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 1, tview.NewTableCell("Total").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorYellow))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", subtotal+taxTotal+tipTotal)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorYellow))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
-
-		refreshSplitTable()
-	}
-
-	refreshItemsTable()
-
-	// Focus management array - gather all focusable elements directly
-	var focusables []tview.Primitive
-	for i := 0; i < form.GetFormItemCount(); i++ {
-		focusables = append(focusables, form.GetFormItem(i))
-	}
-	focusables = append(focusables, splitTable)
-	focusables = append(focusables, itemsTable)
-	for i := 0; i < actionButtons.GetButtonCount(); i++ {
-		focusables = append(focusables, actionButtons.GetButton(i))
-	}
-
-	// Help Text
-	helpText := `Keyboard Shortcuts:
-[?] Toggle Help      | [Tab]/[Backtab] Switch Focus
-(Press Enter on an item to see split options)
-`
-	helpView := tview.NewTextView().
-		SetText(helpText).
-		SetDynamicColors(true).
-		SetTextAlign(tview.AlignLeft)
-	helpView.SetBorder(true).SetTitle("Help").SetTitleAlign(tview.AlignLeft)
-
-	// Layout
-	mainFlex := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(leftFlex, 0, 1, true).
-		AddItem(itemsTable, 0, 2, false)
-
-	rootFlex := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(title, 3, 1, false).
-		AddItem(mainFlex, 0, 1, true).
-		AddItem(actionButtons, 3, 1, false)
+	itemsTable.SetBorder(true).SetTitle("Items & Splits (Press Enter on an item/paid amount)").SetTitleAlign(tview.AlignLeft)
 
 	pages := tview.NewPages()
-	pages.AddPage("main", rootFlex, true, true)
-
 	isModalOpen := false
 	var focusBeforeModal tview.Primitive
 
-	showPromptForm := func(title string, fields []string, initialValues []string, onSubmit func(values []string), onCancel func()) {
+	showPromptForm := func(promptTitle string, fields []string, initialValues []string, onSubmit func(values []string), onCancel func()) {
 		promptForm := tview.NewForm()
 		for i, f := range fields {
 			initVal := ""
@@ -309,7 +119,7 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			pages.RemovePage("prompt_modal")
 			onCancel()
 		})
-		promptForm.SetBorder(true).SetTitle(title)
+		promptForm.SetBorder(true).SetTitle(promptTitle)
 
 		modalForm := tview.NewFlex().
 			AddItem(nil, 0, 1, false).
@@ -323,49 +133,76 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 		app.SetFocus(promptForm)
 	}
 
-	// Split table action handling
-	splitTable.SetSelectedFunc(func(row, column int) {
-		if row == 0 {
-			return
+	var rowActions map[int]func()
+	var refreshItemsTable func()
+
+	refreshItemsTable = func() {
+		// Calculate new total based on items, tax, and tip
+		var subtotal, taxTotal, tipTotal float64
+		for _, item := range parsedDetails.Items {
+			cost, _ := strconv.ParseFloat(item.Amount, 64)
+			subtotal += cost
+		}
+		for _, t := range parsedDetails.Tax {
+			amt, _ := strconv.ParseFloat(t.Amount, 64)
+			taxTotal += amt
+		}
+		for _, t := range parsedDetails.Tip {
+			amt, _ := strconv.ParseFloat(t.Amount, 64)
+			tipTotal += amt
+		}
+		calculatedTotal := subtotal + taxTotal + tipTotal
+		formattedCalculatedTotal := fmt.Sprintf("%.2f", calculatedTotal)
+
+		var totalPaid float64
+		var paidCounts int
+		var onlyPaidIdx int
+		for i, eu := range expense.Users {
+			paid, _ := strconv.ParseFloat(eu.PaidShare, 64)
+			totalPaid += paid
+			if paid > 0 {
+				paidCounts++
+				onlyPaidIdx = i
+			}
 		}
 
-		userIdx := row - 1
-		if userIdx < 0 || userIdx >= len(expense.Users) {
-			return
-		}
-		eu := &expense.Users[userIdx]
+		formattedTotalPaid := fmt.Sprintf("%.2f", totalPaid)
 
-		name := splitTable.GetCell(row, 0).Text
-
-		focusBeforeModal = splitTable
-		isModalOpen = true
-
-		showPromptForm(fmt.Sprintf("Edit Paid Amount: %s", name), []string{"Paid Amount"}, []string{eu.PaidShare}, func(vals []string) {
-			eu.PaidShare = vals[0]
-			refreshItemsTable()
-			isModalOpen = false
-		}, func() {
-			isModalOpen = false
-			app.SetFocus(splitTable)
-		})
-	})
-
-	// Items table action handling
-	itemsTable.SetSelectedFunc(func(row, column int) {
-		if row == 0 {
-			return
+		// Auto correct logic
+		if formattedTotalPaid != formattedCalculatedTotal {
+			if math.Abs(totalPaid) < 0.01 && len(expense.Users) > 0 {
+				// No one is paying, assign all to first payee
+				expense.Users[0].PaidShare = formattedCalculatedTotal
+				form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(formattedCalculatedTotal)
+				expense.Cost = formattedCalculatedTotal
+			} else if paidCounts == 1 {
+				// Only 1 person has paid, update them with the new total
+				expense.Users[onlyPaidIdx].PaidShare = formattedCalculatedTotal
+				form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(formattedCalculatedTotal)
+				expense.Cost = formattedCalculatedTotal
+			}
+			// If neither condition is met, do not auto correct, the mismatch notification will render below
 		}
 
-		focusBeforeModal = itemsTable
-		isModalOpen = true
+		// Ensure Owed and Net are calculated properly against the newly corrected (or uncorrected) paid shares
+		splitwise.CalculateOwed(expense, parsedDetails)
 
-		closeModal := func() {
-			pages.RemovePage("split_modal")
-			isModalOpen = false
-			app.SetFocus(focusBeforeModal)
-		}
+		itemsTable.Clear()
+		rowActions = make(map[int]func())
 
-		if row == 1 { // Add Item
+		itemsTable.SetCell(0, 0, tview.NewTableCell("Qty").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
+		itemsTable.SetCell(0, 1, tview.NewTableCell("Description").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignLeft).SetExpansion(1))
+		itemsTable.SetCell(0, 2, tview.NewTableCell("Amount").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
+		itemsTable.SetCell(0, 3, tview.NewTableCell("Shared With (Splits)").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignLeft).SetExpansion(2))
+
+		itemsTable.SetCell(1, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(1, 1, tview.NewTableCell("[ Add Item ]").SetSelectable(true).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
+		itemsTable.SetCell(1, 2, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(1, 3, tview.NewTableCell("").SetSelectable(false))
+
+		rowActions[1] = func() {
+			focusBeforeModal = itemsTable
+			isModalOpen = true
 			showPromptForm("Add Item", []string{"Qty", "Description", "Cost"}, []string{"1", "", "0.00"}, func(vals []string) {
 				qty := vals[0]
 				desc := vals[1]
@@ -383,120 +220,337 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 				isModalOpen = false
 				app.SetFocus(itemsTable)
 			})
-			return
 		}
 
-		itemIdx := row - 2
-		if itemIdx < 0 || itemIdx >= len(parsedDetails.Items) {
-			isModalOpen = false
-			return
-		}
-		item := &parsedDetails.Items[itemIdx]
-
-		list := tview.NewList().ShowSecondaryText(true)
-		list.SetBorder(true).SetTitle(fmt.Sprintf("Actions: %s", item.Description))
-
-		list.AddItem(fmt.Sprintf("%s fully pays", p1), "", '1', func() {
-			item.SharedWith = []string{p1}
-			refreshItemsTable()
-			closeModal()
-		})
-		list.AddItem(fmt.Sprintf("%s fully pays", p2), "", '2', func() {
-			item.SharedWith = []string{p2}
-			refreshItemsTable()
-			closeModal()
-		})
-		list.AddItem("Both half pay for all (50/50)", "", '3', func() {
-			item.SharedWith = []string{p1, p2}
-			refreshItemsTable()
-			closeModal()
-		})
-		list.AddItem(fmt.Sprintf("%s pays N items, %s pays remaining", p1, p2), "Qty split based on '1x ' prefix", '4', func() {
-			showPromptForm("Split N Items", []string{"Items for " + p1, "Items for " + p2}, nil, func(vals []string) {
-				// Stub
-				closeModal()
-			}, func() { app.SetFocus(list) })
-		})
-		list.AddItem("Different %", "Prompt for percentage", '5', func() {
-			showPromptForm("Percentage Split", []string{"% for " + p1, "% for " + p2}, nil, func(vals []string) {
-				// Stub
-				closeModal()
-			}, func() { app.SetFocus(list) })
-		})
-		list.AddItem("Shares", "Prompt for shares", '6', func() {
-			showPromptForm("Shares Split", []string{"Shares for " + p1, "Shares for " + p2}, nil, func(vals []string) {
-				// Stub
-				closeModal()
-			}, func() { app.SetFocus(list) })
-		})
-		list.AddItem("Exact amounts", "Prompt for exact amounts", '7', func() {
-			showPromptForm("Exact Amounts", []string{"Amount for " + p1, "Amount for " + p2}, nil, func(vals []string) {
-				// Stub
-				closeModal()
-			}, func() { app.SetFocus(list) })
-		})
-
-		// Parse out initial qty and desc for editing
-		initQty := "1"
-		initDesc := item.Description
-		if parts := strings.SplitN(initDesc, "x ", 2); len(parts) == 2 {
-			if _, err := strconv.Atoi(parts[0]); err == nil {
-				initQty = parts[0]
-				initDesc = parts[1]
-			}
-		}
-
-		list.AddItem("Edit item", "Edit description and cost", 'e', func() {
-			showPromptForm("Edit Item", []string{"Qty", "Description", "Cost"}, []string{initQty, initDesc, item.Amount}, func(vals []string) {
-				qty := vals[0]
-				desc := vals[1]
-				if qty != "1" && qty != "" {
-					desc = qty + "x " + desc
+		row := 2
+		var subtotalRender float64
+		for i, item := range parsedDetails.Items {
+			qty := "1"
+			desc := item.Description
+			if parts := strings.SplitN(desc, "x ", 2); len(parts) == 2 {
+				if _, err := strconv.Atoi(parts[0]); err == nil {
+					qty = parts[0]
+					desc = parts[1]
 				}
-				item.Description = desc
-				item.Amount = vals[2]
-				refreshItemsTable()
-				closeModal()
-			}, func() { app.SetFocus(list) })
-		})
-		list.AddItem("Delete item", "Remove this item", 'd', func() {
-			parsedDetails.Items = append(parsedDetails.Items[:itemIdx], parsedDetails.Items[itemIdx+1:]...)
-			refreshItemsTable()
-			closeModal()
-		})
-		list.AddItem("Duplicate item", "Copy this item", 'c', func() {
-			newItem := *item
-			parsedDetails.Items = append(parsedDetails.Items[:itemIdx+1], append([]splitwise.Item{newItem}, parsedDetails.Items[itemIdx+1:]...)...)
-			refreshItemsTable()
-			closeModal()
-		})
-		list.AddItem("Split item", "Split out N items if prefixed with >=2x", 's', func() {
-			showPromptForm("Split Item", []string{"Qty to split out (e.g. 1)"}, nil, func(vals []string) {
-				// Stub
-				closeModal()
-			}, func() { app.SetFocus(list) })
-		})
-		list.AddItem("Cancel", "", 'q', closeModal)
-
-		list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyLeft {
-				closeModal()
-				return nil
 			}
-			return event
-		})
 
-		modal := tview.NewFlex().
-			AddItem(nil, 0, 1, false).
-			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-				AddItem(nil, 0, 1, false).
-				AddItem(list, 25, 1, true).
-				AddItem(nil, 0, 1, false), 60, 1, true).
-			AddItem(nil, 0, 1, false)
+			cost, _ := strconv.ParseFloat(item.Amount, 64)
+			subtotalRender += cost
 
-		pages.AddPage("split_modal", modal, true, true)
-		app.SetFocus(list)
+			sharedWithStr := ""
+			if len(item.SharedWith) > 0 {
+				splitAmt := cost / float64(len(item.SharedWith))
+				var shares []string
+				for _, person := range item.SharedWith {
+					shares = append(shares, fmt.Sprintf("%s (%.2f)", person, splitAmt))
+				}
+				sharedWithStr = strings.Join(shares, ", ")
+			}
+
+			itemsTable.SetCell(row, 0, tview.NewTableCell(qty).SetAlign(tview.AlignCenter).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 1, tview.NewTableCell(desc).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 2, tview.NewTableCell(item.Amount).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 3, tview.NewTableCell(sharedWithStr).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
+
+			rowActions[row] = func(idx int) func() {
+				return func() {
+					focusBeforeModal = itemsTable
+					isModalOpen = true
+					itemPtr := &parsedDetails.Items[idx]
+
+					closeModal := func() {
+						pages.RemovePage("split_modal")
+						isModalOpen = false
+						app.SetFocus(focusBeforeModal)
+					}
+
+					list := tview.NewList().ShowSecondaryText(true)
+					list.SetBorder(true).SetTitle(fmt.Sprintf("Actions: %s", itemPtr.Description))
+
+					list.AddItem(fmt.Sprintf("%s fully pays", p1), "", '1', func() {
+						itemPtr.SharedWith = []string{p1}
+						refreshItemsTable()
+						closeModal()
+					})
+					list.AddItem(fmt.Sprintf("%s fully pays", p2), "", '2', func() {
+						itemPtr.SharedWith = []string{p2}
+						refreshItemsTable()
+						closeModal()
+					})
+					list.AddItem("Both half pay for all (50/50)", "", '3', func() {
+						itemPtr.SharedWith = []string{p1, p2}
+						refreshItemsTable()
+						closeModal()
+					})
+					list.AddItem(fmt.Sprintf("%s pays N items, %s pays remaining", p1, p2), "Qty split based on '1x ' prefix", '4', func() {
+						showPromptForm("Split N Items", []string{"Items for " + p1, "Items for " + p2}, nil, func(vals []string) {
+							// Stub
+							closeModal()
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Different %", "Prompt for percentage", '5', func() {
+						showPromptForm("Percentage Split", []string{"% for " + p1, "% for " + p2}, nil, func(vals []string) {
+							// Stub
+							closeModal()
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Shares", "Prompt for shares", '6', func() {
+						showPromptForm("Shares Split", []string{"Shares for " + p1, "Shares for " + p2}, nil, func(vals []string) {
+							// Stub
+							closeModal()
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Exact amounts", "Prompt for exact amounts", '7', func() {
+						showPromptForm("Exact Amounts", []string{"Amount for " + p1, "Amount for " + p2}, nil, func(vals []string) {
+							// Stub
+							closeModal()
+						}, func() { app.SetFocus(list) })
+					})
+
+					initQty := "1"
+					initDesc := itemPtr.Description
+					if parts := strings.SplitN(initDesc, "x ", 2); len(parts) == 2 {
+						if _, err := strconv.Atoi(parts[0]); err == nil {
+							initQty = parts[0]
+							initDesc = parts[1]
+						}
+					}
+
+					list.AddItem("Edit item", "Edit description and cost", 'e', func() {
+						showPromptForm("Edit Item", []string{"Qty", "Description", "Cost"}, []string{initQty, initDesc, itemPtr.Amount}, func(vals []string) {
+							qty := vals[0]
+							desc := vals[1]
+							if qty != "1" && qty != "" {
+								desc = qty + "x " + desc
+							}
+							itemPtr.Description = desc
+							itemPtr.Amount = vals[2]
+							refreshItemsTable()
+							closeModal()
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Delete item", "Remove this item", 'd', func() {
+						parsedDetails.Items = append(parsedDetails.Items[:idx], parsedDetails.Items[idx+1:]...)
+						refreshItemsTable()
+						closeModal()
+					})
+					list.AddItem("Duplicate item", "Copy this item", 'c', func() {
+						newItem := *itemPtr
+						parsedDetails.Items = append(parsedDetails.Items[:idx+1], append([]splitwise.Item{newItem}, parsedDetails.Items[idx+1:]...)...)
+						refreshItemsTable()
+						closeModal()
+					})
+					list.AddItem("Split item", "Split out N items if prefixed with >=2x", 's', func() {
+						showPromptForm("Split Item", []string{"Qty to split out (e.g. 1)"}, nil, func(vals []string) {
+							// Stub
+							closeModal()
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Cancel", "", 'q', closeModal)
+
+					list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+						if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyLeft {
+							closeModal()
+							return nil
+						}
+						return event
+					})
+
+					modal := tview.NewFlex().
+						AddItem(nil, 0, 1, false).
+						AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+							AddItem(nil, 0, 1, false).
+							AddItem(list, 25, 1, true).
+							AddItem(nil, 0, 1, false), 60, 1, true).
+						AddItem(nil, 0, 1, false)
+
+					pages.AddPage("split_modal", modal, true, true)
+					app.SetFocus(list)
+				}
+			}(i)
+			row++
+		}
+
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("---").SetSelectable(false).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell("---").SetSelectable(false).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("Subtotal").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", subtotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		var taxTotalRender, tipTotalRender float64
+		for _, t := range parsedDetails.Tax {
+			amt, _ := strconv.ParseFloat(t.Amount, 64)
+			taxTotalRender += amt
+		}
+		for _, t := range parsedDetails.Tip {
+			amt, _ := strconv.ParseFloat(t.Amount, 64)
+			tipTotalRender += amt
+		}
+
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("Tax").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", taxTotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("Tip").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", tipTotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		formattedCalculatedTotal = fmt.Sprintf("%.2f", calculatedTotal)
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("Total").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell(formattedCalculatedTotal).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		// Re-evaluate totalPaid after possible autocorrection
+		var freshTotalPaid float64
+		for _, eu := range expense.Users {
+			paid, _ := strconv.ParseFloat(eu.PaidShare, 64)
+			freshTotalPaid += paid
+		}
+		formattedFreshTotalPaid := fmt.Sprintf("%.2f", freshTotalPaid)
+
+		if formattedFreshTotalPaid != formattedCalculatedTotal {
+			// Mismatch notification (could not auto-correct cleanly)
+			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+			itemsTable.SetCell(row, 1, tview.NewTableCell("WARNING: Paid != Total").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorRed))
+			itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%s != %s", formattedFreshTotalPaid, formattedCalculatedTotal)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorRed))
+			itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+			row++
+		}
+
+		// Add "Amounts Paid" directly into the items table
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("--- Amounts Paid ---").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		for i, eu := range expense.Users {
+			lastName := ""
+			if eu.User.LastName != nil {
+				lastName = *eu.User.LastName
+			}
+			name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
+
+			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+			itemsTable.SetCell(row, 1, tview.NewTableCell(name).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 2, tview.NewTableCell(eu.PaidShare).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+
+			rowActions[row] = func(idx int, userName string) func() {
+				return func() {
+					focusBeforeModal = itemsTable
+					isModalOpen = true
+					euPtr := &expense.Users[idx]
+
+					showPromptForm(fmt.Sprintf("Edit Paid Amount: %s", userName), []string{"Paid Amount"}, []string{euPtr.PaidShare}, func(vals []string) {
+						euPtr.PaidShare = vals[0]
+
+						// Update the main Cost form input field to match total sum of new custom payments
+						var newTotalPaid float64
+						for _, u := range expense.Users {
+							p, _ := strconv.ParseFloat(u.PaidShare, 64)
+							newTotalPaid += p
+						}
+						expense.Cost = fmt.Sprintf("%.2f", newTotalPaid)
+						form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(expense.Cost)
+
+						refreshItemsTable()
+						isModalOpen = false
+					}, func() {
+						isModalOpen = false
+						app.SetFocus(itemsTable)
+					})
+				}
+			}(i, name)
+			row++
+		}
+
+		// Add "Amounts Owed" Breakdown
+		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 1, tview.NewTableCell("--- Amounts Owed ---").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		row++
+
+		for _, eu := range expense.Users {
+			lastName := ""
+			if eu.User.LastName != nil {
+				lastName = *eu.User.LastName
+			}
+			name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
+
+			net, _ := strconv.ParseFloat(eu.NetBalance, 64)
+			balanceText := ""
+			if net > 0 {
+				balanceText = fmt.Sprintf("(Is Owed: %.2f)", net)
+			} else if net < 0 {
+				balanceText = fmt.Sprintf("(Owes: %.2f)", -net)
+			} else {
+				balanceText = "(Settled)"
+			}
+
+			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
+			itemsTable.SetCell(row, 1, tview.NewTableCell(name).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+			itemsTable.SetCell(row, 2, tview.NewTableCell(eu.OwedShare).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+			itemsTable.SetCell(row, 3, tview.NewTableCell(balanceText).SetSelectable(false).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorGreen))
+			row++
+		}
+	}
+
+	refreshItemsTable()
+
+	itemsTable.SetSelectedFunc(func(row, column int) {
+		if action, ok := rowActions[row]; ok {
+			action()
+		}
 	})
+
+	// Focus management array - gather all focusable elements directly
+	var focusables []tview.Primitive
+	for i := 0; i < form.GetFormItemCount(); i++ {
+		focusables = append(focusables, form.GetFormItem(i))
+	}
+	focusables = append(focusables, itemsTable)
+	for i := 0; i < actionButtons.GetButtonCount(); i++ {
+		focusables = append(focusables, actionButtons.GetButton(i))
+	}
+
+	// Help Text
+	helpText := `Keyboard Shortcuts:
+[?] Toggle Help      | [Tab]/[Backtab] Switch Focus
+(Press Enter on an item or paid amount to edit)
+`
+	helpView := tview.NewTextView().
+		SetText(helpText).
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignLeft)
+	helpView.SetBorder(true).SetTitle("Help").SetTitleAlign(tview.AlignLeft)
+
+	// Layout
+	mainFlex := tview.NewFlex().SetDirection(tview.FlexColumn).
+		AddItem(leftFlex, 0, 1, true).
+		AddItem(itemsTable, 0, 2, false)
+
+	rootFlex := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(title, 3, 1, false).
+		AddItem(mainFlex, 0, 1, true).
+		AddItem(actionButtons, 3, 1, false)
+
+	pages = tview.NewPages()
+	pages.AddPage("main", rootFlex, true, true)
 
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if isModalOpen {

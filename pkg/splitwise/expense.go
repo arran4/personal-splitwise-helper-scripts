@@ -1,6 +1,9 @@
 package splitwise
 
 import (
+	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -161,8 +164,8 @@ func ParseDetails(details string) *ItemizedDetail {
 				people := strings.Split(peopleStr, ", ")
 
 				result.Items = append(result.Items, Item{
-					Description: desc,
-					Amount:      amount,
+					Description: strings.TrimSpace(desc),
+					Amount:      strings.TrimSpace(amount),
 					SharedWith:  people,
 				})
 			}
@@ -174,20 +177,23 @@ func ParseDetails(details string) *ItemizedDetail {
 
 func isItemsFormat(s string) bool {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) == 0 {
+		return false
+	}
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "Tax: ") || strings.HasPrefix(line, "Tip: ") {
-			continue
+			return true // Tax/Tip is a strong signal
 		}
 		// Basic check for "Desc - Amount (Person...)"
-		if !strings.Contains(line, " - ") || !strings.Contains(line, " (") || !strings.HasSuffix(line, ")") {
-			return false
+		if strings.Contains(line, " - ") && strings.Contains(line, " (") && strings.HasSuffix(line, ")") {
+			return true // At least one valid item line is enough
 		}
 	}
-	return true
+	return false
 }
 
 func parsePersonAmounts(s string) []PersonAmount {
@@ -203,4 +209,101 @@ func parsePersonAmounts(s string) []PersonAmount {
 		}
 	}
 	return amounts
+}
+
+// CalculateOwed amounts based on ItemizedDetail and list of Users.
+// Updates expense.Users in-place.
+func CalculateOwed(expense *DetailedExpense, details *ItemizedDetail) {
+	if details == nil || expense == nil {
+		return
+	}
+
+	userMap := make(map[string]*ExpenseUser)
+	for i, eu := range expense.Users {
+		lastName := ""
+		if eu.User.LastName != nil {
+			lastName = *eu.User.LastName
+		}
+		name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
+		userMap[name] = &expense.Users[i]
+
+		// Reset owed to 0 for recalculation
+		expense.Users[i].OwedShare = "0.00"
+	}
+
+	// Add items
+	for _, item := range details.Items {
+		cost, err := strconv.ParseFloat(item.Amount, 64)
+		if err != nil || len(item.SharedWith) == 0 {
+			continue
+		}
+		splitAmt := cost / float64(len(item.SharedWith))
+		for _, personName := range item.SharedWith {
+			if user, ok := userMap[personName]; ok {
+				currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
+				user.OwedShare = fmt.Sprintf("%.2f", currentOwed+splitAmt)
+			}
+		}
+	}
+
+	// Add tax
+	for _, item := range details.Tax {
+		if user, ok := userMap[item.Name]; ok {
+			cost, _ := strconv.ParseFloat(item.Amount, 64)
+			currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
+			user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
+		}
+	}
+
+	// Add tip
+	for _, item := range details.Tip {
+		if user, ok := userMap[item.Name]; ok {
+			cost, _ := strconv.ParseFloat(item.Amount, 64)
+			currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
+			user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
+		}
+	}
+
+	// Update NetBalance
+	for i := range expense.Users {
+		paid, _ := strconv.ParseFloat(expense.Users[i].PaidShare, 64)
+		owed, _ := strconv.ParseFloat(expense.Users[i].OwedShare, 64)
+		expense.Users[i].NetBalance = fmt.Sprintf("%.2f", paid-owed)
+	}
+}
+
+// AutoCorrectPaidShares updates the PaidShare amounts based on rules if Total changes
+func AutoCorrectPaidShares(expense *DetailedExpense, calculatedTotal float64) {
+	if expense == nil || len(expense.Users) == 0 {
+		return
+	}
+
+	formattedCalculatedTotal := fmt.Sprintf("%.2f", calculatedTotal)
+
+	var totalPaid float64
+	var paidCounts int
+	var onlyPaidIdx int
+	for i, eu := range expense.Users {
+		paid, _ := strconv.ParseFloat(eu.PaidShare, 64)
+		totalPaid += paid
+		if paid > 0 {
+			paidCounts++
+			onlyPaidIdx = i
+		}
+	}
+
+	formattedTotalPaid := fmt.Sprintf("%.2f", totalPaid)
+
+	if formattedTotalPaid != formattedCalculatedTotal {
+		if math.Abs(totalPaid) < 0.01 {
+			// No one is paying, assign all to first payee
+			expense.Users[0].PaidShare = formattedCalculatedTotal
+			expense.Cost = formattedCalculatedTotal
+		} else if paidCounts == 1 {
+			// Only 1 person has paid, update them with the new total
+			expense.Users[onlyPaidIdx].PaidShare = formattedCalculatedTotal
+			expense.Cost = formattedCalculatedTotal
+		}
+		// If multiple people paid, leave it alone (UI will warn)
+	}
 }
