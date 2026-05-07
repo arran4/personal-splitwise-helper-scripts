@@ -484,6 +484,10 @@ func expenseRecipientSummary(expense splitwise.Expense, currentUser *splitwise.C
 }
 
 func chooseRecentExpense(opts expenseListOptions) (string, error) {
+	return chooseRecentExpenseWithConfig(opts, "Select Recent Expense", "Recent transaction selection")
+}
+
+func chooseRecentExpenseWithConfig(opts expenseListOptions, title, footerLabel string) (string, error) {
 	cursor, err := newRecentExpensePageCursor(opts)
 	if err != nil {
 		return "", err
@@ -506,8 +510,8 @@ func chooseRecentExpense(opts expenseListOptions) (string, error) {
 			cost := fmt.Sprintf("%s %s", expense.Cost, expense.Currency)
 			recipient := expenseRecipientSummary(expense, currentUser)
 			rows = append(rows, tui.TableSelectionOption{
-				Cells:       []string{expense.Date, expense.Description, recipient, cost},
-				FilterValue: strings.Join([]string{expense.Date, expense.Description, recipient, cost}, " "),
+				Cells:       []string{strconv.Itoa(expense.ID), expense.Date, expense.Description, recipient, cost},
+				FilterValue: strings.Join([]string{strconv.Itoa(expense.ID), expense.Date, expense.Description, recipient, cost}, " "),
 			})
 		}
 		return cursor.consumePage(len(pageExpenses)), nil
@@ -522,17 +526,17 @@ func chooseRecentExpense(opts expenseListOptions) (string, error) {
 	}
 
 	selected, err := tui.SelectTableOption(
-		"Select Recent Expense",
-		[]string{"Date", "Description", "Recipient", "Cost"},
+		title,
+		[]string{"ID", "Date", "Description", "Recipient", "Cost"},
 		rows,
-		recentExpenseFooter(opts, len(expenses), hasMore),
+		recentExpenseFooter(opts, footerLabel, len(expenses), hasMore),
 		hasMore,
 		func() ([]tui.TableSelectionOption, string, bool, error) {
 			newHasMore, err := loadPage()
 			if err != nil {
 				return nil, "", false, err
 			}
-			return rows, recentExpenseFooter(opts, len(expenses), newHasMore), newHasMore, nil
+			return rows, recentExpenseFooter(opts, footerLabel, len(expenses), newHasMore), newHasMore, nil
 		},
 	)
 	if err != nil {
@@ -541,7 +545,7 @@ func chooseRecentExpense(opts expenseListOptions) (string, error) {
 	return strconv.Itoa(expenses[selected].ID), nil
 }
 
-func recentExpenseFooter(opts expenseListOptions, loaded int, hasMore bool) string {
+func recentExpenseFooter(opts expenseListOptions, label string, loaded int, hasMore bool) string {
 	mode := fmt.Sprintf("limit=%d offset=%d", opts.limit, opts.offset)
 	if strings.TrimSpace(opts.pages) != "" {
 		mode += fmt.Sprintf(" pages=%s", opts.pages)
@@ -550,7 +554,7 @@ func recentExpenseFooter(opts expenseListOptions, loaded int, hasMore bool) stri
 	if hasMore {
 		status += " - more available"
 	}
-	return status + "\n" + mode
+	return label + "\n" + status + "\n" + mode
 }
 
 func invalidateExpenseCache(id string) error {

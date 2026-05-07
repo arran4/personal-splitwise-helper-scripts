@@ -92,3 +92,70 @@ func TestApplyImportedExpense(t *testing.T) {
 		t.Fatalf("owed shares = %q / %q, want 14.07 / 14.10", expense.Users[0].OwedShare, expense.Users[1].OwedShare)
 	}
 }
+
+func TestImportedExpenseMatchScore(t *testing.T) {
+	parsed := &importers.ParsedExpense{
+		Merchant: "ALDI",
+		Total:    "54.05",
+		Items:    []importers.ParsedLineItem{{Description: "Item", Quantity: 1, Amount: "1.00"}},
+	}
+	best := splitwise.Expense{ID: 1, Description: "ALDI", Cost: "54.05"}
+	close := splitwise.Expense{ID: 2, Description: "ALDI Croydon", Cost: "48.00"}
+	weak := splitwise.Expense{ID: 3, Description: "Woolworths", Cost: "54.05"}
+
+	bestScore := importedExpenseMatchScore(parsed, best)
+	closeScore := importedExpenseMatchScore(parsed, close)
+	weakScore := importedExpenseMatchScore(parsed, weak)
+
+	if bestScore <= closeScore {
+		t.Fatalf("best score = %f, close score = %f, want best > close", bestScore, closeScore)
+	}
+	if weakScore != 0 {
+		t.Fatalf("weak score = %f, want 0", weakScore)
+	}
+}
+
+func TestRankImportedExpenseMatches(t *testing.T) {
+	parsed := &importers.ParsedExpense{
+		Merchant: "ALDI",
+		Total:    "54.05",
+		Items:    []importers.ParsedLineItem{{Description: "Item", Quantity: 1, Amount: "1.00"}},
+	}
+	expenses := []splitwise.Expense{
+		{ID: 1, Description: "Woolworths", Cost: "54.05"},
+		{ID: 2, Description: "ALDI Croydon", Cost: "48.00"},
+		{ID: 3, Description: "ALDI", Cost: "54.05"},
+	}
+
+	got := rankImportedExpenseMatches(parsed, expenses)
+	if len(got) != 2 {
+		t.Fatalf("len(rankImportedExpenseMatches()) = %d, want 2", len(got))
+	}
+	if got[0].expense.ID != 3 {
+		t.Fatalf("first match ID = %d, want 3", got[0].expense.ID)
+	}
+	if got[1].expense.ID != 2 {
+		t.Fatalf("second match ID = %d, want 2", got[1].expense.ID)
+	}
+}
+
+func TestImportUpdateSelectionLabels(t *testing.T) {
+	parsed := &importers.ParsedExpense{
+		Merchant: "ALDI",
+		Total:    "54.05",
+		Items: []importers.ParsedLineItem{
+			{Description: "Beans", Quantity: 1, Amount: "2.49"},
+			{Description: "Capers", Quantity: 1, Amount: "2.29"},
+		},
+	}
+
+	if got := importUpdateSelectionTitle(parsed); got != "Select Expense To Update: ALDI 54.05" {
+		t.Fatalf("importUpdateSelectionTitle() = %q", got)
+	}
+	if got := importUpdateSelectionFooter(parsed); got != "Imported update candidate\nMerchant=ALDI Total=54.05 Items=2" {
+		t.Fatalf("importUpdateSelectionFooter() = %q", got)
+	}
+	if got := importMatchSelectionFooter(parsed, 3); got != "Imported update candidate\nMerchant=ALDI Total=54.05 Items=2\nMatched existing expenses: 3\nChoose an existing expense to update or pick New Expense" {
+		t.Fatalf("importMatchSelectionFooter() = %q", got)
+	}
+}

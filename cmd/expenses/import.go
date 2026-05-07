@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -72,28 +74,45 @@ func handleImport(args []string) error {
 
 	updateID := strings.TrimSpace(*id)
 	resolvedMode := explicitMode
-	if resolvedMode == "" || resolvedMode == "auto" {
-		if updateID != "" {
-			resolvedMode = "update"
-		} else if parsed.SuggestedMode == importers.ImportModeUpdate {
-			if autoID, ok, err := autoSelectImportedExpense(parsed, updateOpts); err != nil {
-				return err
-			} else if ok {
-				updateID = autoID
-				resolvedMode = "update"
-			} else {
-				resolvedMode = "new"
+	if updateID != "" {
+		resolvedMode = "update"
+	} else if resolvedMode == "" || resolvedMode == "auto" || resolvedMode == "update" {
+		matches, err := findImportedExpenseMatches(parsed, updateOpts)
+		if err != nil {
+			return err
+		}
+		if len(matches) > 0 {
+			selectedID, selectedNew, err := chooseImportedExpenseMatch(parsed, matches)
+			if err != nil {
+				return fmt.Errorf("resolving imported expense match: %w", err)
 			}
+			if selectedNew {
+				resolvedMode = "new"
+			} else {
+				updateID = selectedID
+				resolvedMode = "update"
+			}
+		} else if resolvedMode == "update" {
+			selectedID, err := chooseRecentExpenseWithConfig(updateOpts, importUpdateSelectionTitle(parsed), importUpdateSelectionFooter(parsed))
+			if err != nil {
+				return fmt.Errorf("selecting expense to update: %w", err)
+			}
+			updateID = selectedID
+			resolvedMode = "update"
 		} else {
 			resolvedMode = "new"
 		}
+	} else if resolvedMode == "new" {
+		resolvedMode = "new"
+	} else {
+		resolvedMode = "new"
 	}
 
 	var expense *splitwise.DetailedExpense
 	updatedExisting := false
 	if resolvedMode == "update" {
 		if updateID == "" {
-			selectedID, err := chooseRecentExpense(updateOpts)
+			selectedID, err := chooseRecentExpenseWithConfig(updateOpts, importUpdateSelectionTitle(parsed), importUpdateSelectionFooter(parsed))
 			if err != nil {
 				return fmt.Errorf("selecting expense to update: %w", err)
 			}
@@ -170,26 +189,66 @@ func readImportText(forceStdin bool) (string, error) {
 	return text, nil
 }
 
-func autoSelectImportedExpense(parsed *importers.ParsedExpense, opts expenseListOptions) (string, bool, error) {
+type importedExpenseMatch struct {
+	expense splitwise.Expense
+	score   float64
+}
+
+func findImportedExpenseMatches(parsed *importers.ParsedExpense, opts expenseListOptions) ([]importedExpenseMatch, error) {
 	if parsed == nil || strings.TrimSpace(parsed.Merchant) == "" {
-		return "", false, nil
+		return nil, nil
 	}
 	expenses, err := fetchExpensesPageSet(opts)
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
+	return rankImportedExpenseMatches(parsed, expenses), nil
+}
 
-	target := normalizeImportMatchText(parsed.Merchant)
-	var matches []splitwise.Expense
+func rankImportedExpenseMatches(parsed *importers.ParsedExpense, expenses []splitwise.Expense) []importedExpenseMatch {
+	var matches []importedExpenseMatch
 	for _, expense := range expenses {
-		if normalizeImportMatchText(expense.Description) == target {
-			matches = append(matches, expense)
+		score := importedExpenseMatchScore(parsed, expense)
+		if score > 0 {
+			matches = append(matches, importedExpenseMatch{expense: expense, score: score})
 		}
 	}
-	if len(matches) == 1 {
-		return strconv.Itoa(matches[0].ID), true, nil
+
+	sort.Slice(matches, func(i, j int) bool {
+		if math.Abs(matches[i].score-matches[j].score) > 0.0001 {
+			return matches[i].score > matches[j].score
+		}
+		return matches[i].expense.ID > matches[j].expense.ID
+	})
+	return matches
+}
+
+func chooseImportedExpenseMatch(parsed *importers.ParsedExpense, matches []importedExpenseMatch) (string, bool, error) {
+	options := make([]tui.SelectionOption, 0, len(matches)+1)
+	options = append(options, tui.SelectionOption{
+		Label: fmt.Sprintf("New Expense | %s | %s | %d item(s)", parsed.Merchant, parsed.Total, len(parsed.Items)),
+	})
+	for _, match := range matches {
+		expense := match.expense
+		label := fmt.Sprintf(
+			"#%d | %s | %s | %s %s | score %.2f",
+			expense.ID,
+			expense.Date,
+			expense.Description,
+			expense.Cost,
+			expense.Currency,
+			match.score,
+		)
+		options = append(options, tui.SelectionOption{Label: label})
 	}
-	return "", false, nil
+	selected, err := tui.SelectOption(importUpdateSelectionTitle(parsed), options, importMatchSelectionFooter(parsed, len(matches)), nil)
+	if err != nil {
+		return "", false, err
+	}
+	if selected == 0 {
+		return "", true, nil
+	}
+	return strconv.Itoa(matches[selected-1].expense.ID), false, nil
 }
 
 func normalizeImportMatchText(s string) string {
@@ -197,6 +256,84 @@ func normalizeImportMatchText(s string) string {
 	replacer := strings.NewReplacer("-", " ", "_", " ", ",", " ", ".", " ", "  ", " ")
 	s = replacer.Replace(s)
 	return strings.Join(strings.Fields(s), " ")
+}
+
+func tokenizeImportMatchText(s string) []string {
+	normalized := normalizeImportMatchText(s)
+	if normalized == "" {
+		return nil
+	}
+	return strings.Fields(normalized)
+}
+
+func importedExpenseMatchScore(parsed *importers.ParsedExpense, expense splitwise.Expense) float64 {
+	merchantTokens := tokenizeImportMatchText(parsed.Merchant)
+	descriptionTokens := tokenizeImportMatchText(expense.Description)
+	if len(merchantTokens) == 0 || len(descriptionTokens) == 0 {
+		return 0
+	}
+
+	descSet := make(map[string]bool, len(descriptionTokens))
+	for _, token := range descriptionTokens {
+		descSet[token] = true
+	}
+
+	tokenMatches := 0
+	for _, token := range merchantTokens {
+		if descSet[token] {
+			tokenMatches++
+		}
+	}
+	if tokenMatches == 0 {
+		return 0
+	}
+
+	score := float64(tokenMatches) / float64(len(merchantTokens))
+	if normalizeImportMatchText(expense.Description) == normalizeImportMatchText(parsed.Merchant) {
+		score += 2
+	}
+
+	importTotal := floatFromMoney(parsed.Total)
+	expenseTotal := floatFromMoney(expense.Cost)
+	if importTotal > 0 && expenseTotal > 0 {
+		diff := math.Abs(importTotal - expenseTotal)
+		switch {
+		case diff < 0.001:
+			score += 2
+		case diff <= 1.00:
+			score += 1
+		case diff <= 5.00:
+			score += 0.25
+		}
+	}
+
+	if len(parsed.Items) > 0 && strings.TrimSpace(expense.Description) != "" {
+		score += 0.1
+	}
+	return score
+}
+
+func importUpdateSelectionTitle(parsed *importers.ParsedExpense) string {
+	if parsed == nil {
+		return "Select Expense To Update"
+	}
+	cost := parsed.Total
+	if cost == "" {
+		cost = "unknown total"
+	}
+	return fmt.Sprintf("Select Expense To Update: %s %s", parsed.Merchant, cost)
+}
+
+func importUpdateSelectionFooter(parsed *importers.ParsedExpense) string {
+	if parsed == nil {
+		return "Imported update resolution"
+	}
+	return fmt.Sprintf("Imported update candidate\nMerchant=%s Total=%s Items=%d", parsed.Merchant, parsed.Total, len(parsed.Items))
+}
+
+func importMatchSelectionFooter(parsed *importers.ParsedExpense, matchCount int) string {
+	base := importUpdateSelectionFooter(parsed)
+	return fmt.Sprintf("%s\nMatched existing expenses: %d\nChoose an existing expense to update or pick New Expense", base, matchCount)
 }
 
 func applyImportedExpense(expense *splitwise.DetailedExpense, parsed *importers.ParsedExpense, preserveExistingNotes bool) error {
