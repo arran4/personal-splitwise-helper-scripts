@@ -89,6 +89,7 @@ type User struct {
 }
 
 type ItemizedDetail struct {
+	Notes string
 	Items []Item
 	Tax   []PersonAmount
 	Tip   []PersonAmount
@@ -111,43 +112,82 @@ func ParseDetails(details string) *ItemizedDetail {
 	}
 
 	result := &ItemizedDetail{}
-	lines := strings.Split(details, "\n")
 
+	// Split by double newline to separate notes from items
+	parts := strings.Split(details, "\n\n")
+
+	var itemsStr string
+
+	// Check if the last part looks like items
+	if len(parts) > 0 {
+		lastPart := parts[len(parts)-1]
+		if isItemsFormat(lastPart) {
+			itemsStr = lastPart
+			if len(parts) > 1 {
+				result.Notes = strings.Join(parts[:len(parts)-1], "\n\n")
+			}
+		} else {
+			result.Notes = details
+			return result
+		}
+	}
+
+	if itemsStr != "" {
+		lines := strings.Split(itemsStr, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			if strings.HasPrefix(line, "Tax: ") {
+				result.Tax = parsePersonAmounts(strings.TrimPrefix(line, "Tax: "))
+			} else if strings.HasPrefix(line, "Tip: ") {
+				result.Tip = parsePersonAmounts(strings.TrimPrefix(line, "Tip: "))
+			} else {
+				parts := strings.SplitN(line, " - ", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				desc := parts[0]
+
+				rest := parts[1]
+				amountAndPeople := strings.SplitN(rest, " (", 2)
+				if len(amountAndPeople) != 2 {
+					continue
+				}
+				amount := amountAndPeople[0]
+				peopleStr := strings.TrimSuffix(amountAndPeople[1], ")")
+				people := strings.Split(peopleStr, ", ")
+
+				result.Items = append(result.Items, Item{
+					Description: desc,
+					Amount:      amount,
+					SharedWith:  people,
+				})
+			}
+		}
+	}
+
+	return result
+}
+
+func isItemsFormat(s string) bool {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-
-		if strings.HasPrefix(line, "Tax: ") {
-			result.Tax = parsePersonAmounts(strings.TrimPrefix(line, "Tax: "))
-		} else if strings.HasPrefix(line, "Tip: ") {
-			result.Tip = parsePersonAmounts(strings.TrimPrefix(line, "Tip: "))
-		} else {
-			parts := strings.SplitN(line, " - ", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			desc := parts[0]
-
-			rest := parts[1]
-			amountAndPeople := strings.SplitN(rest, " (", 2)
-			if len(amountAndPeople) != 2 {
-				continue
-			}
-			amount := amountAndPeople[0]
-			peopleStr := strings.TrimSuffix(amountAndPeople[1], ")")
-			people := strings.Split(peopleStr, ", ")
-
-			result.Items = append(result.Items, Item{
-				Description: desc,
-				Amount:      amount,
-				SharedWith:  people,
-			})
+		if strings.HasPrefix(line, "Tax: ") || strings.HasPrefix(line, "Tip: ") {
+			continue
+		}
+		// Basic check for "Desc - Amount (Person...)"
+		if !strings.Contains(line, " - ") || !strings.Contains(line, " (") || !strings.HasSuffix(line, ")") {
+			return false
 		}
 	}
-
-	return result
+	return true
 }
 
 func parsePersonAmounts(s string) []PersonAmount {

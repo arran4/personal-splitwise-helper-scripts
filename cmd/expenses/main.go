@@ -12,13 +12,14 @@ import (
 	"text/tabwriter"
 
 	"github.com/arran4/personal-splitwise-helper-scripts/pkg/splitwise"
+	"github.com/arran4/personal-splitwise-helper-scripts/pkg/tui"
 )
 
 const CacheDir = ".cache"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: expenses <list|show> [options]")
+		fmt.Println("Usage: expenses <list|show|edit> [options]")
 		os.Exit(1)
 	}
 
@@ -119,46 +120,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		if err := os.MkdirAll(CacheDir, 0755); err != nil {
-			fmt.Println("Error creating cache directory:", err)
+		resp, err := fetchExpense(*id, *refresh)
+		if err != nil {
+			fmt.Println(err)
 			os.Exit(1)
 		}
-
-		cacheFile := filepath.Join(CacheDir, fmt.Sprintf("expense_%s.json", *id))
-		var data []byte
-		var err error
-
-		if !*refresh {
-			data, err = os.ReadFile(cacheFile)
-		}
-
-		if *refresh || os.IsNotExist(err) || len(data) == 0 {
-			client, err := splitwise.NewClient()
-			if err != nil {
-				fmt.Println("Error initializing client:", err)
-				os.Exit(1)
-			}
-
-			data, err = client.GetExpense(*id)
-			if err != nil {
-				fmt.Println("Error fetching expense:", err)
-				os.Exit(1)
-			}
-
-			if err := os.WriteFile(cacheFile, data, 0644); err != nil {
-				fmt.Println("Warning: could not write to cache file:", err)
-			}
-		} else if err != nil {
-			fmt.Println("Error reading from cache:", err)
-			os.Exit(1)
-		}
-
-		var resp splitwise.ExpenseResponse
-		if err := json.Unmarshal(data, &resp); err != nil {
-			fmt.Println("Error parsing expense JSON:", err)
-			os.Exit(1)
-		}
-
 		e := resp.Expense
 
 		fmt.Printf("=========================================\n")
@@ -219,8 +185,70 @@ func main() {
 		w.Flush()
 		fmt.Printf("=========================================\n")
 
+	case "edit":
+		editCmd := flag.NewFlagSet("edit", flag.ExitOnError)
+		id := editCmd.String("id", "", "ID of the expense to edit")
+		refresh := editCmd.Bool("refresh", false, "Force refresh from API instead of using cache")
+
+		editCmd.Parse(os.Args[2:])
+
+		if *id == "" {
+			fmt.Println("Please provide an expense ID via --id")
+			os.Exit(1)
+		}
+
+		resp, err := fetchExpense(*id, *refresh)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		if err := tui.EditExpense(&resp.Expense); err != nil {
+			fmt.Println("Error running TUI:", err)
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Println("Unknown command:", command)
 		os.Exit(1)
 	}
+}
+
+func fetchExpense(id string, refresh bool) (*splitwise.ExpenseResponse, error) {
+	if err := os.MkdirAll(CacheDir, 0755); err != nil {
+		return nil, fmt.Errorf("error creating cache directory: %w", err)
+	}
+
+	cacheFile := filepath.Join(CacheDir, fmt.Sprintf("expense_%s.json", id))
+	var data []byte
+	var err error
+
+	if !refresh {
+		data, err = os.ReadFile(cacheFile)
+	}
+
+	if refresh || os.IsNotExist(err) || len(data) == 0 {
+		client, err := splitwise.NewClient()
+		if err != nil {
+			return nil, fmt.Errorf("error initializing client: %w", err)
+		}
+
+		data, err = client.GetExpense(id)
+		if err != nil {
+			return nil, fmt.Errorf("error fetching expense: %w", err)
+		}
+
+		if err := os.WriteFile(cacheFile, data, 0644); err != nil {
+			fmt.Println("Warning: could not write to cache file:", err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("error reading from cache: %w", err)
+	}
+
+	var resp splitwise.ExpenseResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("error parsing expense JSON: %w", err)
+	}
+
+	return &resp, nil
 }

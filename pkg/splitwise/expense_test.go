@@ -23,6 +23,7 @@ func TestParseDetails(t *testing.T) {
 				"Tax: Arran Ubels - 0.00, test - 0.00\n" +
 				"Tip: Arran Ubels - 0.00, test - 0.00\n",
 			want: &ItemizedDetail{
+				Notes: "",
 				Items: []Item{
 					{
 						Description: "123",
@@ -50,6 +51,7 @@ func TestParseDetails(t *testing.T) {
 			details: "Burger - 15.00 (Alice, Bob)\n" +
 				"Fries - 5.00 (Alice)\n",
 			want: &ItemizedDetail{
+				Notes: "",
 				Items: []Item{
 					{
 						Description: "Burger",
@@ -70,6 +72,7 @@ func TestParseDetails(t *testing.T) {
 				"Invalid Line Without Correct Format\n" +
 				"Fries - 5.00 (Alice)\n",
 			want: &ItemizedDetail{
+				Notes: "",
 				Items: []Item{
 					{
 						Description: "Burger",
@@ -88,10 +91,45 @@ func TestParseDetails(t *testing.T) {
 			name:    "tax only",
 			details: "Tax: Alice - 2.50, Bob - 1.50\n",
 			want: &ItemizedDetail{
+				Notes: "",
 				Tax: []PersonAmount{
 					{Name: "Alice", Amount: "2.50"},
 					{Name: "Bob", Amount: "1.50"},
 				},
+			},
+		},
+		{
+			name:    "with notes",
+			details: "Some notes here\n\nasdfsdaf\nsdaf\nsd\n\ni1 - 23.00 (Arran Ubels, test)\ni2 - 23.00 (Arran Ubels, test)\nTax: Arran Ubels - 0.00, test - 0.00\nTip: Arran Ubels - 0.00, test - 0.00\n",
+			want: &ItemizedDetail{
+				Notes: "Some notes here\n\nasdfsdaf\nsdaf\nsd",
+				Items: []Item{
+					{
+						Description: "i1",
+						Amount:      "23.00",
+						SharedWith:  []string{"Arran Ubels", "test"},
+					},
+					{
+						Description: "i2",
+						Amount:      "23.00",
+						SharedWith:  []string{"Arran Ubels", "test"},
+					},
+				},
+				Tax: []PersonAmount{
+					{Name: "Arran Ubels", Amount: "0.00"},
+					{Name: "test", Amount: "0.00"},
+				},
+				Tip: []PersonAmount{
+					{Name: "Arran Ubels", Amount: "0.00"},
+					{Name: "test", Amount: "0.00"},
+				},
+			},
+		},
+		{
+			name:    "notes only (no valid item grammar)",
+			details: "Just some notes\nno items here",
+			want: &ItemizedDetail{
+				Notes: "Just some notes\nno items here",
 			},
 		},
 	}
@@ -99,7 +137,7 @@ func TestParseDetails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseDetails(tt.details); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseDetails() = %v, want %v", got, tt.want)
+				t.Errorf("ParseDetails() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
