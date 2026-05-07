@@ -387,7 +387,7 @@ func buildImportedDetails(expense *splitwise.DetailedExpense, parsed *importers.
 	}
 	for _, item := range parsed.Items {
 		details.Items = append(details.Items, splitwise.Item{
-			Description: splitwise.FormatItemDescription(item.Quantity, item.Description),
+			Description: splitwise.FormatItemDescription(item.Quantity, importedItemDescription(item)),
 			Amount:      item.Amount,
 			SharedWith:  append([]string(nil), names...),
 		})
@@ -402,6 +402,13 @@ func buildImportedDetails(expense *splitwise.DetailedExpense, parsed *importers.
 	details.Tax = splitImportAmountAcrossUsers(parsed.TaxTotal, names)
 	details.Tip = splitImportAmountAcrossUsers(parsed.TipTotal, names)
 	return details
+}
+
+func importedItemDescription(item importers.ParsedLineItem) string {
+	if strings.TrimSpace(item.Extra) == "" {
+		return item.Description
+	}
+	return item.Description + " | " + strings.ReplaceAll(strings.TrimSpace(item.Extra), "\n", " | ")
 }
 
 func expenseParticipantNames(expense *splitwise.DetailedExpense) []string {

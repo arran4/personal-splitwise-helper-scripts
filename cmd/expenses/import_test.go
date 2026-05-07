@@ -49,7 +49,7 @@ func TestApplyImportedExpense(t *testing.T) {
 		Notes:        "Imported from DoorDash email text",
 		Items: []importers.ParsedLineItem{
 			{Description: "Bakers Life White Lebanese Bread 5 Pack (500 g) (Bakery)", Quantity: 1, Amount: "2.89"},
-			{Description: "Broad Oak Farms Free Range Chicken Thigh Fillets Pack (Meat)", Quantity: 2, Amount: "21.04"},
+			{Description: "Broad Oak Farms Free Range Chicken Thigh Fillets Pack (Meat)", Extra: "• Skin On\nSpecial Instructions: Trim excess fat", Quantity: 2, Amount: "21.04"},
 		},
 		Fees: []importers.ParsedLineItem{
 			{Description: "Bag Fee", Quantity: 1, Amount: "0.25"},
@@ -62,8 +62,8 @@ func TestApplyImportedExpense(t *testing.T) {
 	if err := applyImportedExpense(expense, parsed, false); err != nil {
 		t.Fatalf("applyImportedExpense() unexpected error: %v", err)
 	}
-	if expense.Description != "ALDI" {
-		t.Fatalf("Description = %q, want %q", expense.Description, "ALDI")
+	if expense.Description != "ALDI (28.17 AUD)" {
+		t.Fatalf("Description = %q, want %q", expense.Description, "ALDI (28.17 AUD)")
 	}
 	if expense.Cost != "28.17" {
 		t.Fatalf("Cost = %q, want %q", expense.Cost, "28.17")
@@ -82,7 +82,7 @@ func TestApplyImportedExpense(t *testing.T) {
 	if len(details.Items) != 4 {
 		t.Fatalf("len(details.Items) = %d, want 4", len(details.Items))
 	}
-	if details.Items[1].Description != "2x Broad Oak Farms Free Range Chicken Thigh Fillets Pack (Meat)" {
+	if details.Items[1].Description != "2x Broad Oak Farms Free Range Chicken Thigh Fillets Pack (Meat) | • Skin On | Special Instructions: Trim excess fat" {
 		t.Fatalf("second item description = %q", details.Items[1].Description)
 	}
 	if !reflect.DeepEqual(details.Items[0].SharedWith, []string{"Arran Ubels", "test"}) {

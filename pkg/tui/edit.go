@@ -15,6 +15,18 @@ import (
 	"github.com/rivo/tview"
 )
 
+func splitTUIDescriptionExtra(description string) (string, string) {
+	parts := strings.SplitN(description, " | ", 2)
+	if len(parts) == 1 {
+		return description, ""
+	}
+	return parts[0], parts[1]
+}
+
+func isFiniteNumber(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
 func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 	app := tview.NewApplication()
 	sent := false
@@ -410,7 +422,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 				}
 				desc := splitwise.FormatItemDescription(qty, vals[1])
 				perItemCost, err := strconv.ParseFloat(strings.TrimSpace(vals[2]), 64)
-				if err != nil || perItemCost < 0 {
+				if err != nil || !isFiniteNumber(perItemCost) || perItemCost < 0 {
 					app.SetFocus(itemsTable)
 					return false
 				}
@@ -432,6 +444,10 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 		var subtotalRender float64
 		for i, item := range parsedDetails.Items {
 			qtyInt, desc := splitwise.ParseItemDescription(item.Description)
+			if qtyInt <= 0 {
+				qtyInt = 1
+			}
+			displayDesc, _ := splitTUIDescriptionExtra(desc)
 			qty := strconv.Itoa(qtyInt)
 
 			cost, _ := strconv.ParseFloat(item.Amount, 64)
@@ -464,7 +480,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			}
 
 			itemsTable.SetCell(row, 0, tview.NewTableCell(qty).SetAlign(tview.AlignCenter).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, 1, tview.NewTableCell(desc).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 1, tview.NewTableCell(displayDesc).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
 			if showPerItemColumn {
 				itemsTable.SetCell(row, 2, tview.NewTableCell(formatMoney(perItemCost)).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
 			}
@@ -484,7 +500,9 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 					}
 
 					list := tview.NewList().ShowSecondaryText(true)
-					list.SetBorder(true).SetTitle(fmt.Sprintf("Actions: %s", itemPtr.Description))
+					itemQty, itemDesc := splitwise.ParseItemDescription(itemPtr.Description)
+					actionDesc, _ := splitTUIDescriptionExtra(itemDesc)
+					list.SetBorder(true).SetTitle(fmt.Sprintf("Actions: %s", splitwise.FormatItemDescription(itemQty, actionDesc)))
 
 					list.AddItem(fmt.Sprintf("%s owes full item", p1), "", '1', func() {
 						itemPtr.SharedWith = []string{p1}
@@ -580,7 +598,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							p2Pct := 0.0
 							if p1Raw != "" {
 								parsed, err := strconv.ParseFloat(p1Raw, 64)
-								if err != nil || parsed < 0 {
+								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
 									app.SetFocus(list)
 									return false
 								}
@@ -588,7 +606,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 							if p2Raw != "" {
 								parsed, err := strconv.ParseFloat(p2Raw, 64)
-								if err != nil || parsed < 0 {
+								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
 									app.SetFocus(list)
 									return false
 								}
@@ -608,7 +626,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							totalAmount, err := strconv.ParseFloat(itemPtr.Amount, 64)
-							if err != nil {
+							if err != nil || !isFiniteNumber(totalAmount) || totalAmount < 0 {
 								app.SetFocus(list)
 								return false
 							}
@@ -692,7 +710,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							totalAmount, err := strconv.ParseFloat(itemPtr.Amount, 64)
-							if err != nil {
+							if err != nil || !isFiniteNumber(totalAmount) || totalAmount < 0 {
 								app.SetFocus(list)
 								return false
 							}
@@ -702,7 +720,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							p2Cents := 0
 							if p1Raw != "" {
 								parsed, err := strconv.ParseFloat(p1Raw, 64)
-								if err != nil || parsed < 0 {
+								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
 									app.SetFocus(list)
 									return false
 								}
@@ -710,7 +728,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 							if p2Raw != "" {
 								parsed, err := strconv.ParseFloat(p2Raw, 64)
-								if err != nil || parsed < 0 {
+								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
 									app.SetFocus(list)
 									return false
 								}
@@ -737,22 +755,30 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 					})
 
 					initQtyInt, initDesc := splitwise.ParseItemDescription(itemPtr.Description)
+					if initQtyInt <= 0 {
+						initQtyInt = 1
+					}
+					initDisplayDesc, initExtra := splitTUIDescriptionExtra(initDesc)
 					initQty := strconv.Itoa(initQtyInt)
 					initAmount, _ := strconv.ParseFloat(itemPtr.Amount, 64)
 					initPerItemCost := formatMoney(initAmount / float64(initQtyInt))
 
 					list.AddItem("Edit item", "Edit quantity, description, and unit cost", 'e', func() {
-						showPromptForm("Edit Item", []string{"Qty", "Description", "Per Item Cost"}, []string{initQty, initDesc, initPerItemCost}, func(vals []string) bool {
+						showPromptForm("Edit Item", []string{"Qty", "Description", "Per Item Cost"}, []string{initQty, initDisplayDesc, initPerItemCost}, func(vals []string) bool {
 							qty := 1
 							if parsedQty, err := strconv.Atoi(strings.TrimSpace(vals[0])); err == nil && parsedQty > 0 {
 								qty = parsedQty
 							}
 							perItemCost, err := strconv.ParseFloat(strings.TrimSpace(vals[2]), 64)
-							if err != nil || perItemCost < 0 {
+							if err != nil || !isFiniteNumber(perItemCost) || perItemCost < 0 {
 								app.SetFocus(list)
 								return false
 							}
-							itemPtr.Description = splitwise.FormatItemDescription(qty, vals[1])
+							newDesc := strings.TrimSpace(vals[1])
+							if initExtra != "" {
+								newDesc += " | " + initExtra
+							}
+							itemPtr.Description = splitwise.FormatItemDescription(qty, newDesc)
 							itemPtr.Amount = formatMoney(perItemCost * float64(qty))
 							refreshItemsTable()
 							closeModal()
@@ -773,7 +799,8 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 					list.AddItem("Split item", "Split out N quantity units into a new row", 's', func() {
 						showPromptForm("Split Item", []string{"Qty to split out (e.g. 1)"}, nil, func(vals []string) bool {
 							currentQty, currentDesc := splitwise.ParseItemDescription(itemPtr.Description)
-							if currentQty < 2 {
+							currentBaseDesc, currentExtra := splitTUIDescriptionExtra(currentDesc)
+							if currentQty <= 1 {
 								app.SetFocus(list)
 								return false
 							}
@@ -784,11 +811,19 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							totalAmount, _ := strconv.ParseFloat(itemPtr.Amount, 64)
+							if !isFiniteNumber(totalAmount) || totalAmount < 0 {
+								app.SetFocus(list)
+								return false
+							}
 							perItemCost := totalAmount / float64(currentQty)
 							remainingQty := currentQty - splitQty
+							serializedDesc := currentBaseDesc
+							if currentExtra != "" {
+								serializedDesc += " | " + currentExtra
+							}
 
 							newItem := splitwise.Item{
-								Description: splitwise.FormatItemDescription(splitQty, currentDesc),
+								Description: splitwise.FormatItemDescription(splitQty, serializedDesc),
 								Amount:      formatMoney(perItemCost * float64(splitQty)),
 								SharedWith:  append([]string{}, itemPtr.SharedWith...),
 							}
@@ -798,13 +833,18 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 								itemPtr.SharedWith = append([]string{}, itemPtr.SharedWith[splitQty:]...)
 							}
 
-							itemPtr.Description = splitwise.FormatItemDescription(remainingQty, currentDesc)
+							itemPtr.Description = splitwise.FormatItemDescription(remainingQty, serializedDesc)
 							itemPtr.Amount = formatMoney(perItemCost * float64(remainingQty))
 							parsedDetails.Items = append(parsedDetails.Items[:idx+1], append([]splitwise.Item{newItem}, parsedDetails.Items[idx+1:]...)...)
 							closeModal()
 							refreshItemsTable()
 							return true
 						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("No one owes this item", "", '0', func() {
+						itemPtr.SharedWith = nil
+						refreshItemsTable()
+						closeModal()
 					})
 					list.AddItem("Cancel", "", 'q', closeModal)
 
