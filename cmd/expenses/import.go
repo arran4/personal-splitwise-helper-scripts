@@ -20,13 +20,13 @@ import (
 
 func handleImport(args []string) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: expenses import doordash email text [--mode auto|new|update] [--stdin] [--id <expense-id>] [--group-id <id>|--friend-id <id>]")
+		return fmt.Errorf("usage: expenses import <doordash|bunnings> email text [--mode auto|new|update] [--stdin] [--id <expense-id>] [--group-id <id>|--friend-id <id>]")
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(args[0]))
 	channel := strings.ToLower(strings.TrimSpace(args[1]))
 	format := strings.ToLower(strings.TrimSpace(args[2]))
-	if provider != "doordash" || channel != "email" || format != "text" {
+	if channel != "email" || format != "text" {
 		return fmt.Errorf("unsupported import source %q %q %q", provider, channel, format)
 	}
 
@@ -54,7 +54,15 @@ func handleImport(args []string) error {
 	if err != nil {
 		return err
 	}
-	parsed, err := importers.ParseDoorDashEmailText(text)
+	var parsed *importers.ParsedExpense
+	switch provider {
+	case "doordash":
+		parsed, err = importers.ParseDoorDashEmailText(text)
+	case "bunnings":
+		parsed, err = importers.ParseBunningsEmailText(text)
+	default:
+		return fmt.Errorf("unsupported import source %q %q %q", provider, channel, format)
+	}
 	if err != nil {
 		return err
 	}

@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
+
+var detailsItemLinePattern = regexp.MustCompile(`^(.*) - ([0-9]+(?:\.[0-9]{2})?) \((.*)\)$`)
 
 type ExpensesResponse struct {
 	Expenses []Expense `json:"expenses"`
@@ -207,19 +210,13 @@ func ParseDetails(details string) *ItemizedDetail {
 			} else if strings.HasPrefix(line, "Tip: ") {
 				result.Tip = parsePersonAmounts(strings.TrimPrefix(line, "Tip: "))
 			} else {
-				parts := strings.SplitN(line, " - ", 2)
-				if len(parts) != 2 {
+				matches := detailsItemLinePattern.FindStringSubmatch(line)
+				if len(matches) != 4 {
 					continue
 				}
-				desc := parts[0]
-
-				rest := parts[1]
-				amountAndPeople := strings.SplitN(rest, " (", 2)
-				if len(amountAndPeople) != 2 {
-					continue
-				}
-				amount := amountAndPeople[0]
-				peopleStr := strings.TrimSuffix(amountAndPeople[1], ")")
+				desc := matches[1]
+				amount := matches[2]
+				peopleStr := matches[3]
 				people := parseSharedWith(peopleStr, strings.TrimSpace(amount))
 
 				result.Items = append(result.Items, Item{

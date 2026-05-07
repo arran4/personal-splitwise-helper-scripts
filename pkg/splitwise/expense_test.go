@@ -304,6 +304,21 @@ func TestSerializeDetailsCompactsWeightedSharedWith(t *testing.T) {
 	}
 }
 
+func TestSerializeDetailsRoundTripWithHyphenInDescription(t *testing.T) {
+	details := &ItemizedDetail{
+		Items: []Item{
+			{Description: "All Set 25 x 33cm All Purpose Wipes On a Roll - 50 Pack", Amount: "2.50", SharedWith: []string{"Alice", "Bob"}},
+		},
+	}
+
+	serialized := SerializeDetails(details)
+	roundTrip := ParseDetails(serialized)
+
+	if !reflect.DeepEqual(roundTrip, details) {
+		t.Fatalf("ParseDetails(SerializeDetails(details)) = %+v, want %+v", roundTrip, details)
+	}
+}
+
 func repeatName(name string, n int) []string {
 	out := make([]string, n)
 	for i := range out {
