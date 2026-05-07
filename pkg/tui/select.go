@@ -153,6 +153,9 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 	table := tview.NewTable().SetSelectable(true, true)
 	table.SetBorder(true).SetTitle(title)
 	table.SetFixed(1, 0)
+	focusedSelectedStyle := tcell.StyleDefault
+	unfocusedSelectedStyle := tcell.StyleDefault.Foreground(tview.Styles.PrimaryTextColor).Background(tview.Styles.PrimitiveBackgroundColor)
+	table.SetSelectedStyle(focusedSelectedStyle)
 	statusView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
@@ -180,7 +183,11 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 	selectedRow, selectedCol := 1, 0
 	var refreshTable func(query string)
 	setTableFocused := func(focused bool) {
-		table.SetSelectable(focused, focused)
+		if focused {
+			table.SetSelectedStyle(focusedSelectedStyle)
+		} else {
+			table.SetSelectedStyle(unfocusedSelectedStyle)
+		}
 		if focused {
 			table.Select(selectedRow, selectedCol)
 		}
@@ -230,9 +237,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 				table.SetCell(1, col, tview.NewTableCell("").SetSelectable(false))
 			}
 			selectedRow, selectedCol = 1, 0
-			if rows, cols := table.GetSelectable(); rows || cols {
-				table.Select(selectedRow, selectedCol)
-			}
+			table.Select(selectedRow, selectedCol)
 			return
 		}
 
@@ -255,9 +260,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 		if _, ok := cellIndex[[2]int{selectedRow, selectedCol}]; !ok {
 			selectedRow, selectedCol = 1, 0
 		}
-		if rows, cols := table.GetSelectable(); rows || cols {
-			table.Select(selectedRow, selectedCol)
-		}
+		table.Select(selectedRow, selectedCol)
 	}
 
 	refreshTable("")
@@ -414,6 +417,9 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 	table := tview.NewTable().SetSelectable(true, false)
 	table.SetBorder(true).SetTitle(title)
 	table.SetFixed(1, 0)
+	focusedSelectedStyle := tcell.StyleDefault
+	unfocusedSelectedStyle := tcell.StyleDefault.Foreground(tview.Styles.PrimaryTextColor).Background(tview.Styles.PrimitiveBackgroundColor)
+	table.SetSelectedStyle(focusedSelectedStyle)
 
 	statusView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -447,7 +453,11 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 	selectedRow := 1
 	loadMoreRow := -1
 	setTableFocused := func(focused bool) {
-		table.SetSelectable(focused, false)
+		if focused {
+			table.SetSelectedStyle(focusedSelectedStyle)
+		} else {
+			table.SetSelectedStyle(unfocusedSelectedStyle)
+		}
 		if focused {
 			table.Select(selectedRow, 0)
 		}
@@ -501,9 +511,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 		if len(current) == 0 && loadMoreRow > 0 {
 			selectedRow = loadMoreRow
 		}
-		if rows, cols := table.GetSelectable(); rows || cols {
-			table.Select(selectedRow, 0)
-		}
+		table.Select(selectedRow, 0)
 	}
 
 	loadMore := func() {
@@ -525,9 +533,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 			if len(current) > 0 {
 				selectedRow = len(current)
 			}
-			if rows, cols := table.GetSelectable(); rows || cols {
-				table.Select(selectedRow, 0)
-			}
+			table.Select(selectedRow, 0)
 		}
 		setTableFocused(true)
 		app.SetFocus(table)

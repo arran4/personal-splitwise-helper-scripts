@@ -96,9 +96,23 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 		SetBorders(false).
 		SetSelectable(true, false).
 		SetFixed(1, 0).
-		SetSelectedStyle(tcell.StyleDefault.Reverse(true))
+		SetSelectedStyle(tcell.StyleDefault)
 
 	itemsTable.SetBorder(true).SetTitle("Items & Splits (Press Enter on an item/paid amount)").SetTitleAlign(tview.AlignLeft)
+	focusedItemsTableStyle := tcell.StyleDefault
+	unfocusedItemsTableStyle := tcell.StyleDefault.Foreground(tview.Styles.PrimaryTextColor).Background(tview.Styles.PrimitiveBackgroundColor)
+	setItemsTableFocused := func(focused bool) {
+		if focused {
+			itemsTable.SetSelectedStyle(focusedItemsTableStyle)
+			return
+		}
+		itemsTable.SetSelectedStyle(unfocusedItemsTableStyle)
+	}
+	setItemsTableFocused(false)
+	setFocus := func(p tview.Primitive) {
+		setItemsTableFocused(p == itemsTable)
+		app.SetFocus(p)
+	}
 
 	var pages *tview.Pages // Initialize below
 	isModalOpen := false
@@ -112,11 +126,11 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 				pages.RemovePage("message_modal")
 				isModalOpen = false
-				app.SetFocus(previousFocus)
+				setFocus(previousFocus)
 			})
 		modal.SetTitle(title)
 		pages.AddPage("message_modal", modal, true, true)
-		app.SetFocus(modal)
+		setFocus(modal)
 	}
 	showTextModal := func(title, content string) {
 		previousFocus := app.GetFocus()
@@ -130,7 +144,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 		closeModal := func() {
 			pages.RemovePage("text_modal")
 			isModalOpen = false
-			app.SetFocus(previousFocus)
+			setFocus(previousFocus)
 		}
 		textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyEnter {
@@ -144,7 +158,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 				AddItem(textView, 0, 1, true).
 				AddItem(nil, 0, 0, false), 0, 1, true)
 		pages.AddPage("text_modal", modal, true, true)
-		app.SetFocus(textView)
+		setFocus(textView)
 	}
 
 	showPromptForm := func(promptTitle string, fields []string, initialValues []string, onSubmit func(values []string) bool, onCancel func()) {
@@ -167,7 +181,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			pages.RemovePage("prompt_modal")
 
 			// Set focus back to what it was
-			app.SetFocus(focusBeforeModal)
+			setFocus(focusBeforeModal)
 		})
 		promptForm.AddButton("Cancel", func() {
 			pages.RemovePage("prompt_modal")
@@ -190,7 +204,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			AddItem(nil, 0, 1, false)
 
 		pages.AddPage("prompt_modal", modalForm, true, true)
-		app.SetFocus(promptForm)
+		setFocus(promptForm)
 	}
 
 	var rowActions map[int]func()
@@ -370,7 +384,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			showMessageModal("Exported", fmt.Sprintf("Wrote current state to %s", target))
 			return true
 		}, func() {
-			app.SetFocus(actionButtons)
+			setFocus(actionButtons)
 		})
 	})
 	actionButtons.SetButtonsAlign(tview.AlignCenter)
@@ -424,7 +438,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 				desc := splitwise.FormatItemDescription(qty, vals[1])
 				perItemCost, err := strconv.ParseFloat(strings.TrimSpace(vals[2]), 64)
 				if err != nil || !isFiniteNumber(perItemCost) || perItemCost < 0 {
-					app.SetFocus(itemsTable)
+					setFocus(itemsTable)
 					return false
 				}
 				parsedDetails.Items = append(parsedDetails.Items, splitwise.Item{
@@ -437,7 +451,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 				return true
 			}, func() {
 				isModalOpen = false
-				app.SetFocus(itemsTable)
+				setFocus(itemsTable)
 			})
 		}
 
@@ -480,13 +494,13 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 				sharedWithStr = strings.Join(shares, ", ")
 			}
 
-			itemsTable.SetCell(row, 0, tview.NewTableCell(qty).SetAlign(tview.AlignCenter).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, 1, tview.NewTableCell(displayDesc).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 0, tview.NewTableCell(qty).SetSelectable(true).SetAlign(tview.AlignCenter).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, 1, tview.NewTableCell(displayDesc).SetSelectable(true).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
 			if showPerItemColumn {
-				itemsTable.SetCell(row, 2, tview.NewTableCell(formatMoney(perItemCost)).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+				itemsTable.SetCell(row, 2, tview.NewTableCell(formatMoney(perItemCost)).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
 			}
-			itemsTable.SetCell(row, totalCol, tview.NewTableCell(item.Amount).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, sharedCol, tview.NewTableCell(sharedWithStr).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, totalCol, tview.NewTableCell(item.Amount).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, sharedCol, tview.NewTableCell(sharedWithStr).SetSelectable(true).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
 
 			rowActions[row] = func(idx int) func() {
 				return func() {
@@ -497,7 +511,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 					closeModal := func() {
 						pages.RemovePage("split_modal")
 						isModalOpen = false
-						app.SetFocus(focusBeforeModal)
+						setFocus(focusBeforeModal)
 					}
 
 					list := tview.NewList().ShowSecondaryText(true)
@@ -527,7 +541,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
@@ -536,7 +550,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p1Raw != "" {
 								parsed, err := strconv.Atoi(p1Raw)
 								if err != nil || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p1Qty = parsed
@@ -544,7 +558,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p2Raw != "" {
 								parsed, err := strconv.Atoi(p2Raw)
 								if err != nil || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p2Qty = parsed
@@ -558,7 +572,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							if p1Qty < 0 || p2Qty < 0 || p1Qty+p2Qty != totalQty {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
@@ -574,7 +588,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							refreshItemsTable()
 							closeModal()
 							return true
-						}, func() { app.SetFocus(list) })
+						}, func() { setFocus(list) })
 					})
 					list.AddItem("Different % owed", "Prompt for percentage", '5', func() {
 						p1Amount, _, _, _, totalWeight := itemParticipantAmounts(*itemPtr)
@@ -591,7 +605,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
@@ -600,7 +614,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p1Raw != "" {
 								parsed, err := strconv.ParseFloat(p1Raw, 64)
 								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p1Pct = parsed
@@ -608,7 +622,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p2Raw != "" {
 								parsed, err := strconv.ParseFloat(p2Raw, 64)
 								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p2Pct = parsed
@@ -622,13 +636,13 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							if p1Pct < 0 || p2Pct < 0 || math.Abs((p1Pct+p2Pct)-100) > 0.0001 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
 							totalAmount, err := strconv.ParseFloat(itemPtr.Amount, 64)
 							if err != nil || !isFiniteNumber(totalAmount) || totalAmount < 0 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 							totalCents := int(math.Round(totalAmount * 100))
@@ -638,7 +652,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							closeModal()
 							refreshItemsTable()
 							return true
-						}, func() { app.SetFocus(list) })
+						}, func() { setFocus(list) })
 					})
 					list.AddItem("Shares owed", "Prompt for shares", '6', func() {
 						_, _, p1Weight, p2Weight, totalWeight := itemParticipantAmounts(*itemPtr)
@@ -653,7 +667,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
@@ -662,7 +676,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p1Raw != "" {
 								parsed, err := strconv.Atoi(p1Raw)
 								if err != nil || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p1Shares = parsed
@@ -670,7 +684,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p2Raw != "" {
 								parsed, err := strconv.Atoi(p2Raw)
 								if err != nil || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p2Shares = parsed
@@ -684,7 +698,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							if p1Shares <= 0 || p2Shares <= 0 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
@@ -692,7 +706,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							closeModal()
 							refreshItemsTable()
 							return true
-						}, func() { app.SetFocus(list) })
+						}, func() { setFocus(list) })
 					})
 					list.AddItem("Exact amounts owed", "Prompt for exact amounts", '7', func() {
 						p1Amount, p2Amount, _, _, totalWeight := itemParticipantAmounts(*itemPtr)
@@ -706,13 +720,13 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							p1Raw := strings.TrimSpace(vals[0])
 							p2Raw := strings.TrimSpace(vals[1])
 							if p1Raw == "" && p2Raw == "" {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
 							totalAmount, err := strconv.ParseFloat(itemPtr.Amount, 64)
 							if err != nil || !isFiniteNumber(totalAmount) || totalAmount < 0 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 							totalCents := int(math.Round(totalAmount * 100))
@@ -722,7 +736,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p1Raw != "" {
 								parsed, err := strconv.ParseFloat(p1Raw, 64)
 								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p1Cents = int(math.Round(parsed * 100))
@@ -730,7 +744,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							if p2Raw != "" {
 								parsed, err := strconv.ParseFloat(p2Raw, 64)
 								if err != nil || !isFiniteNumber(parsed) || parsed < 0 {
-									app.SetFocus(list)
+									setFocus(list)
 									return false
 								}
 								p2Cents = int(math.Round(parsed * 100))
@@ -744,7 +758,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 
 							if p1Cents < 0 || p2Cents < 0 || p1Cents+p2Cents != totalCents {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
@@ -752,7 +766,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							closeModal()
 							refreshItemsTable()
 							return true
-						}, func() { app.SetFocus(list) })
+						}, func() { setFocus(list) })
 					})
 
 					initQtyInt, initDesc := splitwise.ParseItemDescription(itemPtr.Description)
@@ -772,7 +786,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							}
 							perItemCost, err := strconv.ParseFloat(strings.TrimSpace(vals[2]), 64)
 							if err != nil || !isFiniteNumber(perItemCost) || perItemCost < 0 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 							newDesc := strings.TrimSpace(vals[1])
@@ -784,7 +798,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							refreshItemsTable()
 							closeModal()
 							return true
-						}, func() { app.SetFocus(list) })
+						}, func() { setFocus(list) })
 					})
 					list.AddItem("Delete item", "Remove this item", 'd', func() {
 						parsedDetails.Items = append(parsedDetails.Items[:idx], parsedDetails.Items[idx+1:]...)
@@ -802,18 +816,18 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							currentQty, currentDesc := splitwise.ParseItemDescription(itemPtr.Description)
 							currentBaseDesc, currentExtra := splitTUIDescriptionExtra(currentDesc)
 							if currentQty <= 1 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 							splitQty, err := strconv.Atoi(strings.TrimSpace(vals[0]))
 							if err != nil || splitQty <= 0 || splitQty >= currentQty {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 
 							totalAmount, _ := strconv.ParseFloat(itemPtr.Amount, 64)
 							if !isFiniteNumber(totalAmount) || totalAmount < 0 {
-								app.SetFocus(list)
+								setFocus(list)
 								return false
 							}
 							perItemCost := totalAmount / float64(currentQty)
@@ -840,7 +854,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							closeModal()
 							refreshItemsTable()
 							return true
-						}, func() { app.SetFocus(list) })
+						}, func() { setFocus(list) })
 					})
 					list.AddItem("No one owes this item", "", '0', func() {
 						itemPtr.SharedWith = nil
@@ -866,7 +880,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 						AddItem(nil, 0, 1, false)
 
 					pages.AddPage("split_modal", modal, true, true)
-					app.SetFocus(list)
+					setFocus(list)
 				}
 			}(i)
 			row++
@@ -967,10 +981,10 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 			itemsTable.SetCell(row, 1, tview.NewTableCell(name).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
 			if showPerItemColumn {
-				itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+				itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(true))
 			}
 			itemsTable.SetCell(row, totalCol, tview.NewTableCell(eu.PaidShare).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
+			itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(true))
 
 			rowActions[row] = func(idx int, userName string) func() {
 				return func() {
@@ -981,7 +995,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 					closeModal := func() {
 						pages.RemovePage("split_modal")
 						isModalOpen = false
-						app.SetFocus(focusBeforeModal)
+						setFocus(focusBeforeModal)
 					}
 
 					list := tview.NewList().ShowSecondaryText(true)
@@ -994,7 +1008,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							closeModal()
 							return true
 						}, func() {
-							app.SetFocus(list)
+							setFocus(list)
 						})
 					})
 
@@ -1008,7 +1022,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 							closeModal()
 							return true
 						}, func() {
-							app.SetFocus(list)
+							setFocus(list)
 						})
 					})
 
@@ -1060,7 +1074,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 						AddItem(nil, 0, 1, false)
 
 					pages.AddPage("split_modal", modal, true, true)
-					app.SetFocus(list)
+					setFocus(list)
 				}
 			}(i, name)
 			row++
@@ -1157,22 +1171,22 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			for i, p := range focusables {
 				if p == currentFocus {
 					next := (i + 1) % len(focusables)
-					app.SetFocus(focusables[next])
+					setFocus(focusables[next])
 					return nil
 				}
 			}
-			app.SetFocus(focusables[0])
+			setFocus(focusables[0])
 			return nil
 		} else if event.Key() == tcell.KeyBacktab {
 			currentFocus := app.GetFocus()
 			for i, p := range focusables {
 				if p == currentFocus {
 					next := (i - 1 + len(focusables)) % len(focusables)
-					app.SetFocus(focusables[next])
+					setFocus(focusables[next])
 					return nil
 				}
 			}
-			app.SetFocus(focusables[len(focusables)-1])
+			setFocus(focusables[len(focusables)-1])
 			return nil
 		}
 
