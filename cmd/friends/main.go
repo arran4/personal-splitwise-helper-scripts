@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -19,10 +20,16 @@ type FriendsResponse struct {
 }
 
 type Friend struct {
-	ID        int    `json:"id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
+	ID        int       `json:"id"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	Email     string    `json:"email"`
+	Balance   []Balance `json:"balance"`
+}
+
+type Balance struct {
+	CurrencyCode string `json:"currency_code"`
+	Amount       string `json:"amount"`
 }
 
 func main() {
@@ -103,9 +110,18 @@ func listFriends() error {
 	fmt.Printf("Cache last modified: %s\n\n", fileInfo.ModTime().Format(time.RFC1123))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "ID\tFIRST NAME\tLAST NAME\tEMAIL")
+	fmt.Fprintln(w, "ID\tFIRST NAME\tLAST NAME\tEMAIL\tBALANCE")
 	for _, f := range resp.Friends {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", f.ID, f.FirstName, f.LastName, f.Email)
+		var balances []string
+		for _, b := range f.Balance {
+			balances = append(balances, fmt.Sprintf("%s %s", b.Amount, b.CurrencyCode))
+		}
+		balanceStr := strings.Join(balances, ", ")
+		if balanceStr == "" {
+			balanceStr = "0.00"
+		}
+
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", f.ID, f.FirstName, f.LastName, f.Email, balanceStr)
 	}
 	w.Flush()
 
