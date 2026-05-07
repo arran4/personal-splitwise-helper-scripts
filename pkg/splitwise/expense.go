@@ -16,11 +16,14 @@ type ExpenseResponse struct {
 }
 
 type Expense struct {
-	ID          int    `json:"id"`
-	Description string `json:"description"`
-	Cost        string `json:"cost"`
-	Currency    string `json:"currency_code"`
-	Date        string `json:"date"`
+	ID          int           `json:"id"`
+	Description string        `json:"description"`
+	Cost        string        `json:"cost"`
+	Currency    string        `json:"currency_code"`
+	Date        string        `json:"date"`
+	GroupID     interface{}   `json:"group_id"`
+	Payment     bool          `json:"payment"`
+	Users       []ExpenseUser `json:"users"`
 }
 
 type DetailedExpense struct {

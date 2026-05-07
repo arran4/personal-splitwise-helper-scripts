@@ -82,3 +82,18 @@ func TestFilterSelectionOptionsSortsByScore(t *testing.T) {
 		t.Fatalf("second result = %+v, want label %q score 4", got[1], "1a2s34d")
 	}
 }
+
+func TestFilterTableSelectionOptionsUsesJoinedCells(t *testing.T) {
+	options := []TableSelectionOption{
+		{Cells: []string{"2026-05-07", "Dinner", "Arran Ubels", "12.00 AUD"}},
+		{Cells: []string{"2026-05-06", "Coffee", "test", "4.00 AUD"}},
+	}
+
+	got := filterTableSelectionOptions(options, "Arr")
+	if len(got) != 1 {
+		t.Fatalf("len(filterTableSelectionOptions()) = %d, want 1", len(got))
+	}
+	if got[0].cells[2] != "Arran Ubels" {
+		t.Fatalf("matched row = %+v, want recipient %q", got[0].cells, "Arran Ubels")
+	}
+}

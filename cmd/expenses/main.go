@@ -38,75 +38,32 @@ func main() {
 		updatedBefore := listCmd.String("updated-before", "", "Updated before")
 		limit := listCmd.Int("limit", 20, "Number of expenses to fetch per page")
 		offset := listCmd.Int("offset", 0, "Initial offset")
-		keepGoing := listCmd.Bool("keep-going", false, "Fetch all pages")
-		getPages := listCmd.Int("get-pages", 1, "Number of pages to fetch (ignored if --keep-going is set)")
+		pages := listCmd.String("pages", "", "Page selection: N, N-M, N-, or all")
 
 		listCmd.Parse(os.Args[2:])
 
-		client, err := splitwise.NewClient()
+		allExpenses, err := fetchExpensesPageSet(expenseListOptions{
+			groupID:       *groupID,
+			friendID:      *friendID,
+			datedAfter:    *datedAfter,
+			datedBefore:   *datedBefore,
+			updatedAfter:  *updatedAfter,
+			updatedBefore: *updatedBefore,
+			limit:         *limit,
+			offset:        *offset,
+			pages:         *pages,
+		})
 		if err != nil {
-			fmt.Println("Error initializing client:", err)
+			fmt.Println("Error fetching expenses:", err)
 			os.Exit(1)
 		}
 
-		var allExpenses []splitwise.Expense
-		currentOffset := *offset
-		pagesFetched := 0
-
-		for {
-			params := url.Values{}
-			if *groupID != 0 {
-				params.Add("group_id", strconv.Itoa(*groupID))
-			}
-			if *friendID != 0 {
-				params.Add("friend_id", strconv.Itoa(*friendID))
-			}
-			if *datedAfter != "" {
-				params.Add("dated_after", *datedAfter)
-			}
-			if *datedBefore != "" {
-				params.Add("dated_before", *datedBefore)
-			}
-			if *updatedAfter != "" {
-				params.Add("updated_after", *updatedAfter)
-			}
-			if *updatedBefore != "" {
-				params.Add("updated_before", *updatedBefore)
-			}
-
-			params.Add("limit", strconv.Itoa(*limit))
-			params.Add("offset", strconv.Itoa(currentOffset))
-
-			data, err := client.GetExpenses(params.Encode())
-			if err != nil {
-				fmt.Println("Error fetching expenses:", err)
-				os.Exit(1)
-			}
-
-			var resp splitwise.ExpensesResponse
-			if err := json.Unmarshal(data, &resp); err != nil {
-				fmt.Println("Error parsing expenses:", err)
-				os.Exit(1)
-			}
-
-			allExpenses = append(allExpenses, resp.Expenses...)
-			pagesFetched++
-
-			if len(resp.Expenses) < *limit {
-				break // No more data available
-			}
-
-			if !*keepGoing && pagesFetched >= *getPages {
-				break
-			}
-
-			currentOffset += *limit
-		}
+		currentUser, _ := getOrFetchCurrentUser()
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "ID\tDATE\tDESCRIPTION\tCOST")
+		fmt.Fprintln(w, "ID\tDATE\tDESCRIPTION\tRECIPIENT\tCOST")
 		for _, e := range allExpenses {
-			fmt.Fprintf(w, "%d\t%s\t%s\t%s %s\n", e.ID, e.Date, e.Description, e.Cost, e.Currency)
+			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s %s\n", e.ID, e.Date, e.Description, expenseRecipientSummary(e, currentUser), e.Cost, e.Currency)
 		}
 		w.Flush()
 
@@ -192,12 +149,23 @@ func main() {
 		id := editCmd.String("id", "", "ID of the expense to edit")
 		refresh := editCmd.Bool("refresh", false, "Force refresh from API instead of using cache")
 		verbose := editCmd.Bool("verbose", false, "Print the full server success payload after send")
+		limit := editCmd.Int("limit", 20, "Number of recent expenses to fetch per page when selecting")
+		offset := editCmd.Int("offset", 0, "Initial offset when selecting a recent expense")
+		pages := editCmd.String("pages", "", "Page selection for recent expense chooser: N, N-M, N-, or all")
 
 		editCmd.Parse(os.Args[2:])
 
 		if *id == "" {
-			fmt.Println("Please provide an expense ID via --id")
-			os.Exit(1)
+			selectedID, err := chooseRecentExpense(expenseListOptions{
+				limit:  *limit,
+				offset: *offset,
+				pages:  *pages,
+			})
+			if err != nil {
+				fmt.Println("Error selecting expense:", err)
+				os.Exit(1)
+			}
+			*id = selectedID
 		}
 
 		resp, err := fetchExpense(*id, *refresh)
@@ -288,6 +256,295 @@ func main() {
 		fmt.Println("Unknown command:", command)
 		os.Exit(1)
 	}
+}
+
+type expenseListOptions struct {
+	groupID       int
+	friendID      int
+	datedAfter    string
+	datedBefore   string
+	updatedAfter  string
+	updatedBefore string
+	limit         int
+	offset        int
+	pages         string
+}
+
+func fetchExpensesPage(opts expenseListOptions, offset, limit int) ([]splitwise.Expense, error) {
+	client, err := splitwise.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("initializing client: %w", err)
+	}
+
+	params := url.Values{}
+	if opts.groupID != 0 {
+		params.Add("group_id", strconv.Itoa(opts.groupID))
+	}
+	if opts.friendID != 0 {
+		params.Add("friend_id", strconv.Itoa(opts.friendID))
+	}
+	if opts.datedAfter != "" {
+		params.Add("dated_after", opts.datedAfter)
+	}
+	if opts.datedBefore != "" {
+		params.Add("dated_before", opts.datedBefore)
+	}
+	if opts.updatedAfter != "" {
+		params.Add("updated_after", opts.updatedAfter)
+	}
+	if opts.updatedBefore != "" {
+		params.Add("updated_before", opts.updatedBefore)
+	}
+	params.Add("limit", strconv.Itoa(limit))
+	params.Add("offset", strconv.Itoa(offset))
+
+	data, err := client.GetExpenses(params.Encode())
+	if err != nil {
+		return nil, err
+	}
+
+	var resp splitwise.ExpensesResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing expenses: %w", err)
+	}
+	return resp.Expenses, nil
+}
+
+func fetchExpensesPageSet(opts expenseListOptions) ([]splitwise.Expense, error) {
+	var allExpenses []splitwise.Expense
+	limit := opts.limit
+	if limit <= 0 {
+		limit = 20
+	}
+	pagePlan, err := parsePagesFlag(opts.pages)
+	if err != nil {
+		return nil, err
+	}
+	currentOffset := opts.offset
+	if pagePlan.startPage > 0 {
+		currentOffset = (pagePlan.startPage - 1) * limit
+	}
+	pagesFetched := 0
+
+	for {
+		expenses, err := fetchExpensesPage(opts, currentOffset, limit)
+		if err != nil {
+			return nil, err
+		}
+
+		allExpenses = append(allExpenses, expenses...)
+		pagesFetched++
+
+		if len(expenses) < limit {
+			break
+		}
+		if !pagePlan.fetchAll && pagesFetched >= pagePlan.pageCount {
+			break
+		}
+		currentOffset += limit
+	}
+
+	return allExpenses, nil
+}
+
+type pagePlan struct {
+	startPage int
+	pageCount int
+	fetchAll  bool
+}
+
+type recentExpensePageCursor struct {
+	limit          int
+	nextOffset     int
+	remainingPages int
+	fetchAll       bool
+}
+
+func parsePagesFlag(raw string) (pagePlan, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return pagePlan{startPage: 0, pageCount: 1, fetchAll: false}, nil
+	}
+	if strings.EqualFold(raw, "all") {
+		return pagePlan{startPage: 1, pageCount: 0, fetchAll: true}, nil
+	}
+	if strings.Contains(raw, "-") {
+		parts := strings.SplitN(raw, "-", 2)
+		start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || start < 1 {
+			return pagePlan{}, fmt.Errorf("invalid --pages value %q", raw)
+		}
+		endPart := strings.TrimSpace(parts[1])
+		if endPart == "" {
+			return pagePlan{startPage: start, pageCount: 0, fetchAll: true}, nil
+		}
+		end, err := strconv.Atoi(endPart)
+		if err != nil || end < start {
+			return pagePlan{}, fmt.Errorf("invalid --pages value %q", raw)
+		}
+		return pagePlan{startPage: start, pageCount: (end - start) + 1, fetchAll: false}, nil
+	}
+	page, err := strconv.Atoi(raw)
+	if err != nil || page < 1 {
+		return pagePlan{}, fmt.Errorf("invalid --pages value %q", raw)
+	}
+	return pagePlan{startPage: page, pageCount: 1, fetchAll: false}, nil
+}
+
+func newRecentExpensePageCursor(opts expenseListOptions) (recentExpensePageCursor, error) {
+	limit := opts.limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if strings.TrimSpace(opts.pages) == "" {
+		return recentExpensePageCursor{
+			limit:          limit,
+			nextOffset:     opts.offset,
+			remainingPages: 0,
+			fetchAll:       true,
+		}, nil
+	}
+
+	plan, err := parsePagesFlag(opts.pages)
+	if err != nil {
+		return recentExpensePageCursor{}, err
+	}
+
+	nextOffset := opts.offset
+	if plan.startPage > 0 {
+		nextOffset = (plan.startPage - 1) * limit
+	}
+	return recentExpensePageCursor{
+		limit:          limit,
+		nextOffset:     nextOffset,
+		remainingPages: plan.pageCount,
+		fetchAll:       plan.fetchAll,
+	}, nil
+}
+
+func (c recentExpensePageCursor) canLoadMore() bool {
+	return c.fetchAll || c.remainingPages > 0
+}
+
+func (c *recentExpensePageCursor) consumePage(resultCount int) bool {
+	if !c.fetchAll && c.remainingPages > 0 {
+		c.remainingPages--
+	}
+	c.nextOffset += c.limit
+	if resultCount < c.limit {
+		c.fetchAll = false
+		c.remainingPages = 0
+	}
+	return c.canLoadMore()
+}
+
+func getOrFetchCurrentUser() (*splitwise.CurrentUser, error) {
+	user, err := splitwise.GetCachedCurrentUser(CacheDir)
+	if err == nil {
+		return user, nil
+	}
+	if err := fetchCurrentUser(); err != nil {
+		return nil, err
+	}
+	return splitwise.GetCachedCurrentUser(CacheDir)
+}
+
+func expenseRecipientSummary(expense splitwise.Expense, currentUser *splitwise.CurrentUser) string {
+	if len(expense.Users) == 0 {
+		if expense.GroupID != nil {
+			return fmt.Sprintf("Group %v", expense.GroupID)
+		}
+		return "-"
+	}
+
+	var recipients []string
+	for _, eu := range expense.Users {
+		if currentUser != nil && eu.UserID == currentUser.ID {
+			continue
+		}
+		lastName := ""
+		if eu.User.LastName != nil {
+			lastName = *eu.User.LastName
+		}
+		name := strings.TrimSpace(fmt.Sprintf("%s %s", eu.User.FirstName, lastName))
+		if name != "" {
+			recipients = append(recipients, name)
+		}
+	}
+	if len(recipients) == 0 {
+		return "-"
+	}
+	return strings.Join(recipients, ", ")
+}
+
+func chooseRecentExpense(opts expenseListOptions) (string, error) {
+	cursor, err := newRecentExpensePageCursor(opts)
+	if err != nil {
+		return "", err
+	}
+
+	currentUser, _ := getOrFetchCurrentUser()
+	expenses := make([]splitwise.Expense, 0)
+	rows := make([]tui.TableSelectionOption, 0)
+
+	loadPage := func() (bool, error) {
+		if !cursor.canLoadMore() {
+			return false, nil
+		}
+		pageExpenses, err := fetchExpensesPage(opts, cursor.nextOffset, cursor.limit)
+		if err != nil {
+			return false, err
+		}
+		expenses = append(expenses, pageExpenses...)
+		for _, expense := range pageExpenses {
+			cost := fmt.Sprintf("%s %s", expense.Cost, expense.Currency)
+			recipient := expenseRecipientSummary(expense, currentUser)
+			rows = append(rows, tui.TableSelectionOption{
+				Cells:       []string{expense.Date, expense.Description, recipient, cost},
+				FilterValue: strings.Join([]string{expense.Date, expense.Description, recipient, cost}, " "),
+			})
+		}
+		return cursor.consumePage(len(pageExpenses)), nil
+	}
+
+	hasMore, err := loadPage()
+	if err != nil {
+		return "", err
+	}
+	if len(expenses) == 0 {
+		return "", fmt.Errorf("no expenses found")
+	}
+
+	selected, err := tui.SelectTableOption(
+		"Select Recent Expense",
+		[]string{"Date", "Description", "Recipient", "Cost"},
+		rows,
+		recentExpenseFooter(opts, len(expenses), hasMore),
+		hasMore,
+		func() ([]tui.TableSelectionOption, string, bool, error) {
+			newHasMore, err := loadPage()
+			if err != nil {
+				return nil, "", false, err
+			}
+			return rows, recentExpenseFooter(opts, len(expenses), newHasMore), newHasMore, nil
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(expenses[selected].ID), nil
+}
+
+func recentExpenseFooter(opts expenseListOptions, loaded int, hasMore bool) string {
+	mode := fmt.Sprintf("limit=%d offset=%d", opts.limit, opts.offset)
+	if strings.TrimSpace(opts.pages) != "" {
+		mode += fmt.Sprintf(" pages=%s", opts.pages)
+	}
+	status := fmt.Sprintf("Loaded %d recent transaction(s)", loaded)
+	if hasMore {
+		status += " - more available"
+	}
+	return status + "\n" + mode
 }
 
 func invalidateExpenseCache(id string) error {
