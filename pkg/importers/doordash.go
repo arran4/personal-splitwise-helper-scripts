@@ -3,6 +3,7 @@ package importers
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -202,27 +203,11 @@ func parseDoorDashFees(lines []string) []ParsedLineItem {
 	return fees
 }
 
-func parseDoorDashItems(lines []string) []ParsedLineItem {
-	start := 0
-	for i, line := range lines {
-		if strings.EqualFold(line, "Items you ordered") {
-			start = i + 1
-			break
-		}
-	}
-	if start == 0 {
-		for i, line := range lines {
-			if strings.EqualFold(line, "Your receipt") {
-				start = i + 1
-				break
-			}
-		}
-	}
-
+func extractItemsFromSection(lines []string, startIndex int) []ParsedLineItem {
 	var items []ParsedLineItem
-	for i := start; i < len(lines); i++ {
+	for i := startIndex; i < len(lines); i++ {
 		line := lines[i]
-		if isDoorDashSummaryLabel(line) {
+		if isDoorDashSummaryLabel(line) || isDoorDashSectionLabel(line) {
 			break
 		}
 		matches := doordashQtyPattern.FindStringSubmatch(line)
@@ -243,6 +228,7 @@ func parseDoorDashItems(lines []string) []ParsedLineItem {
 			}
 			if parsed := extractDoorDashAmount(next); parsed != "" {
 				amount = parsed
+				i = j // Move parser forward
 				break
 			}
 		}
@@ -257,6 +243,78 @@ func parseDoorDashItems(lines []string) []ParsedLineItem {
 		})
 	}
 	return items
+}
+
+func parseDoorDashItems(lines []string) []ParsedLineItem {
+	itemMap := make(map[string]ParsedLineItem)
+
+	// 1. Parse baseline items from "Items you ordered" or "Your receipt"
+	orderedItemsStart := -1
+	for i, line := range lines {
+		if strings.EqualFold(line, "Items you ordered") {
+			orderedItemsStart = i + 1
+			break
+		}
+	}
+	if orderedItemsStart == -1 {
+		for i, line := range lines {
+			if strings.EqualFold(line, "Your receipt") {
+				orderedItemsStart = i + 1
+				break
+			}
+		}
+	}
+
+	if orderedItemsStart != -1 {
+		orderedItems := extractItemsFromSection(lines, orderedItemsStart)
+		for _, item := range orderedItems {
+			itemMap[item.Description] = item
+		}
+	}
+
+	// 2. Process "Items that were adjusted" for substitutions
+	adjustedItemsStart := -1
+	for i, line := range lines {
+		if strings.EqualFold(line, "Items that were adjusted") {
+			adjustedItemsStart = i + 1
+			break
+		}
+	}
+
+	if adjustedItemsStart != -1 {
+		for i := adjustedItemsStart; i < len(lines); i++ {
+			line := lines[i]
+			if isDoorDashSummaryLabel(line) {
+				break
+			}
+			if strings.EqualFold(line, "Substituted with:") {
+				// The substituted item is on the next lines
+				subItems := extractItemsFromSection(lines, i+1)
+				if len(subItems) > 0 {
+					subItem := subItems[0]
+					if existing, ok := itemMap[subItem.Description]; ok {
+						existing.Quantity += subItem.Quantity
+						existingAmount, _ := strconv.ParseFloat(existing.Amount, 64)
+						subAmount, _ := strconv.ParseFloat(subItem.Amount, 64)
+						existing.Amount = fmt.Sprintf("%.2f", existingAmount+subAmount)
+						itemMap[subItem.Description] = existing
+					} else {
+						itemMap[subItem.Description] = subItem
+					}
+				}
+			}
+		}
+	}
+
+	var finalItems []ParsedLineItem
+	for _, item := range itemMap {
+		finalItems = append(finalItems, item)
+	}
+	sort.Slice(finalItems, func(i, j int) bool {
+		return finalItems[i].Description < finalItems[j].Description
+	})
+
+	return finalItems
 }
 
 func buildDoorDashNotes(lines []string) string {
@@ -304,7 +362,7 @@ func extractDoorDashAmount(line string) string {
 func isDoorDashSectionLabel(line string) bool {
 	lower := strings.ToLower(strings.TrimSpace(line))
 	switch lower {
-	case "your receipt", "items that were adjusted", "out of stock", "items you ordered", "get order help":
+	case "your receipt", "items that were adjusted", "out of stock", "items you ordered", "get order help", "substituted", "substituted with:":
 		return true
 	}
 	return isDoorDashSummaryLabel(line)

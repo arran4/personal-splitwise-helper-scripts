@@ -349,7 +349,11 @@ func applyImportedExpense(expense *splitwise.DetailedExpense, parsed *importers.
 	newDetails := buildImportedDetails(expense, parsed, previousDetails, preserveExistingNotes)
 	newTotal := itemizedDetailTotal(newDetails)
 
-	expense.Description = parsed.Merchant
+	if parsed.Merchant != "" && parsed.Total != "" && parsed.CurrencyCode != "" {
+		expense.Description = fmt.Sprintf("%s (%s %s)", parsed.Merchant, parsed.Total, parsed.CurrencyCode)
+	} else {
+		expense.Description = parsed.Merchant
+	}
 	expense.Details = splitwise.SerializeDetails(newDetails)
 	if parsed.CurrencyCode != "" {
 		expense.CurrencyCode = parsed.CurrencyCode
