@@ -95,7 +95,8 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 	itemsTable := tview.NewTable().
 		SetBorders(false).
 		SetSelectable(true, false).
-		SetFixed(1, 0)
+		SetFixed(1, 0).
+		SetSelectedStyle(tcell.StyleDefault.Reverse(true))
 
 	itemsTable.SetBorder(true).SetTitle("Items & Splits (Press Enter on an item/paid amount)").SetTitleAlign(tview.AlignLeft)
 

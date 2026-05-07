@@ -179,6 +179,12 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 	cellIndex := map[[2]int]int{}
 	selectedRow, selectedCol := 1, 0
 	var refreshTable func(query string)
+	setTableFocused := func(focused bool) {
+		table.SetSelectable(focused, focused)
+		if focused {
+			table.Select(selectedRow, selectedCol)
+		}
+	}
 	screenWidth := 80
 	computeResultColumns := func(filtered []scoredSelectionOption) int {
 		if len(filtered) == 0 {
@@ -224,7 +230,9 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 				table.SetCell(1, col, tview.NewTableCell("").SetSelectable(false))
 			}
 			selectedRow, selectedCol = 1, 0
-			table.Select(selectedRow, selectedCol)
+			if rows, cols := table.GetSelectable(); rows || cols {
+				table.Select(selectedRow, selectedCol)
+			}
 			return
 		}
 
@@ -247,10 +255,13 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 		if _, ok := cellIndex[[2]int{selectedRow, selectedCol}]; !ok {
 			selectedRow, selectedCol = 1, 0
 		}
-		table.Select(selectedRow, selectedCol)
+		if rows, cols := table.GetSelectable(); rows || cols {
+			table.Select(selectedRow, selectedCol)
+		}
 	}
 
 	refreshTable("")
+	setTableFocused(false)
 
 	actionButtons := tview.NewForm()
 	actionButtons.SetButtonsAlign(tview.AlignCenter)
@@ -274,6 +285,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 	if onRefresh != nil {
 		actionButtons.AddButton("Refresh", func() {
 			refreshOptions()
+			setTableFocused(true)
 			app.SetFocus(table)
 		})
 	}
@@ -287,6 +299,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 		refreshTable(text)
 	})
 	handoffToTable := func(event *tcell.EventKey) *tcell.EventKey {
+		setTableFocused(true)
 		app.SetFocus(table)
 		app.QueueEvent(tcell.NewEventKey(event.Key(), event.Rune(), event.Modifiers()))
 		return nil
@@ -294,6 +307,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 	filterInput.SetDoneFunc(func(key tcell.Key) {
 		switch key {
 		case tcell.KeyEnter, tcell.KeyDown:
+			setTableFocused(true)
 			app.SetFocus(table)
 		case tcell.KeyEsc:
 			selected = -1
@@ -303,6 +317,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 	filterInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab, tcell.KeyBacktab:
+			setTableFocused(true)
 			app.SetFocus(table)
 			return nil
 		case tcell.KeyUp, tcell.KeyDown:
@@ -339,6 +354,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 			if event.Key() == tcell.KeyUp && selectedRow > 1 {
 				return event
 			}
+			setTableFocused(false)
 			app.SetFocus(filterInput)
 			return nil
 		case tcell.KeyLeft, tcell.KeyRight, tcell.KeyDown, tcell.KeyEnter:
@@ -347,6 +363,7 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 
 		if event.Rune() != 0 && event.Modifiers()&tcell.ModCtrl == 0 && event.Modifiers()&tcell.ModAlt == 0 {
 			filterInput.SetText(filterInput.GetText() + string(event.Rune()))
+			setTableFocused(false)
 			app.SetFocus(filterInput)
 			return nil
 		}
@@ -372,6 +389,8 @@ func SelectOption(title string, options []SelectionOption, footer string, onRefr
 		return false
 	})
 
+	setTableFocused(false)
+	setTableFocused(false)
 	if err := app.SetRoot(root, true).SetFocus(filterInput).Run(); err != nil {
 		return -1, err
 	}
@@ -427,6 +446,12 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 	rowIndex := map[int]int{}
 	selectedRow := 1
 	loadMoreRow := -1
+	setTableFocused := func(focused bool) {
+		table.SetSelectable(focused, false)
+		if focused {
+			table.Select(selectedRow, 0)
+		}
+	}
 
 	var refreshTable func(query string)
 	refreshTable = func(query string) {
@@ -476,7 +501,9 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 		if len(current) == 0 && loadMoreRow > 0 {
 			selectedRow = loadMoreRow
 		}
-		table.Select(selectedRow, 0)
+		if rows, cols := table.GetSelectable(); rows || cols {
+			table.Select(selectedRow, 0)
+		}
 	}
 
 	loadMore := func() {
@@ -498,12 +525,16 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 			if len(current) > 0 {
 				selectedRow = len(current)
 			}
-			table.Select(selectedRow, 0)
+			if rows, cols := table.GetSelectable(); rows || cols {
+				table.Select(selectedRow, 0)
+			}
 		}
+		setTableFocused(true)
 		app.SetFocus(table)
 	}
 
 	refreshTable("")
+	setTableFocused(false)
 
 	actionButtons := tview.NewForm()
 	actionButtons.SetButtonsAlign(tview.AlignCenter)
@@ -520,6 +551,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 		refreshTable(text)
 	})
 	handoffToTable := func(event *tcell.EventKey) *tcell.EventKey {
+		setTableFocused(true)
 		app.SetFocus(table)
 		app.QueueEvent(tcell.NewEventKey(event.Key(), event.Rune(), event.Modifiers()))
 		return nil
@@ -527,6 +559,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 	filterInput.SetDoneFunc(func(key tcell.Key) {
 		switch key {
 		case tcell.KeyEnter, tcell.KeyDown:
+			setTableFocused(true)
 			app.SetFocus(table)
 		case tcell.KeyEsc:
 			selected = -1
@@ -536,6 +569,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 	filterInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab, tcell.KeyBacktab:
+			setTableFocused(true)
 			app.SetFocus(table)
 			return nil
 		case tcell.KeyUp, tcell.KeyDown:
@@ -573,15 +607,18 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 			app.Stop()
 			return nil
 		case tcell.KeyTab:
+			setTableFocused(false)
 			app.SetFocus(actionButtons)
 			return nil
 		case tcell.KeyBacktab:
+			setTableFocused(false)
 			app.SetFocus(filterInput)
 			return nil
 		case tcell.KeyUp:
 			if selectedRow > 1 {
 				return event
 			}
+			setTableFocused(false)
 			app.SetFocus(filterInput)
 			return nil
 		case tcell.KeyEnter, tcell.KeyDown, tcell.KeyLeft, tcell.KeyRight:
@@ -598,6 +635,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 
 		if event.Rune() != 0 && event.Modifiers()&tcell.ModCtrl == 0 && event.Modifiers()&tcell.ModAlt == 0 {
 			filterInput.SetText(filterInput.GetText() + string(event.Rune()))
+			setTableFocused(false)
 			app.SetFocus(filterInput)
 			return nil
 		}
@@ -611,9 +649,11 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 			app.Stop()
 			return nil
 		case tcell.KeyTab:
+			setTableFocused(false)
 			app.SetFocus(filterInput)
 			return nil
 		case tcell.KeyBacktab:
+			setTableFocused(true)
 			app.SetFocus(table)
 			return nil
 		}
