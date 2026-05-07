@@ -91,11 +91,11 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 	itemsTable.SetBorder(true).SetTitle("Items & Splits (Press Enter on an item/paid amount)").SetTitleAlign(tview.AlignLeft)
 
-	pages := tview.NewPages()
+	var pages *tview.Pages // Initialize below
 	isModalOpen := false
 	var focusBeforeModal tview.Primitive
 
-	showPromptForm := func(promptTitle string, fields []string, initialValues []string, onSubmit func(values []string), onCancel func()) {
+	showPromptForm := func(promptTitle string, fields []string, initialValues []string, onSubmit func(values []string) bool, onCancel func()) {
 		promptForm := tview.NewForm()
 		for i, f := range fields {
 			initVal := ""
@@ -109,7 +109,9 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			for i := 0; i < len(fields); i++ {
 				vals = append(vals, promptForm.GetFormItem(i).(*tview.InputField).GetText())
 			}
-			onSubmit(vals)
+			if !onSubmit(vals) {
+				return
+			}
 			pages.RemovePage("prompt_modal")
 
 			// Set focus back to what it was
@@ -120,6 +122,12 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			onCancel()
 		})
 		promptForm.SetBorder(true).SetTitle(promptTitle)
+		for i, field := range fields {
+			if field == "Description" {
+				promptForm.SetFocus(i)
+				break
+			}
+		}
 
 		modalForm := tview.NewFlex().
 			AddItem(nil, 0, 1, false).
@@ -135,9 +143,7 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 	var rowActions map[int]func()
 	var refreshItemsTable func()
-
-	refreshItemsTable = func() {
-		// Calculate new total based on items, tax, and tip
+	calculateDetailsTotal := func() float64 {
 		var subtotal, taxTotal, tipTotal float64
 		for _, item := range parsedDetails.Items {
 			cost, _ := strconv.ParseFloat(item.Amount, 64)
@@ -151,37 +157,42 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			amt, _ := strconv.ParseFloat(t.Amount, 64)
 			tipTotal += amt
 		}
-		calculatedTotal := subtotal + taxTotal + tipTotal
-		formattedCalculatedTotal := fmt.Sprintf("%.2f", calculatedTotal)
-
-		var totalPaid float64
-		var paidCounts int
-		var onlyPaidIdx int
-		for i, eu := range expense.Users {
-			paid, _ := strconv.ParseFloat(eu.PaidShare, 64)
-			totalPaid += paid
-			if paid > 0 {
-				paidCounts++
-				onlyPaidIdx = i
+		return subtotal + taxTotal + tipTotal
+	}
+	lastCalculatedTotal := calculateDetailsTotal()
+	hasQuantityItems := func() bool {
+		for _, item := range parsedDetails.Items {
+			qty, _ := splitwise.ParseItemDescription(item.Description)
+			if qty > 1 {
+				return true
 			}
 		}
+		return false
+	}
+	formatMoney := func(v float64) string {
+		return fmt.Sprintf("%.2f", v)
+	}
+	buildWeightedSharedWith := func(p1Weight, p2Weight int) []string {
+		sharedWith := make([]string, 0, p1Weight+p2Weight)
+		for i := 0; i < p1Weight; i++ {
+			sharedWith = append(sharedWith, p1)
+		}
+		for i := 0; i < p2Weight; i++ {
+			sharedWith = append(sharedWith, p2)
+		}
+		return sharedWith
+	}
 
-		formattedTotalPaid := fmt.Sprintf("%.2f", totalPaid)
+	refreshItemsTable = func() {
+		calculatedTotal := calculateDetailsTotal()
+		formattedCalculatedTotal := fmt.Sprintf("%.2f", calculatedTotal)
+		showPerItemColumn := hasQuantityItems()
 
-		// Auto correct logic
-		if formattedTotalPaid != formattedCalculatedTotal {
-			if math.Abs(totalPaid) < 0.01 && len(expense.Users) > 0 {
-				// No one is paying, assign all to first payee
-				expense.Users[0].PaidShare = formattedCalculatedTotal
-				form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(formattedCalculatedTotal)
-				expense.Cost = formattedCalculatedTotal
-			} else if paidCounts == 1 {
-				// Only 1 person has paid, update them with the new total
-				expense.Users[onlyPaidIdx].PaidShare = formattedCalculatedTotal
-				form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(formattedCalculatedTotal)
-				expense.Cost = formattedCalculatedTotal
-			}
-			// If neither condition is met, do not auto correct, the mismatch notification will render below
+		if fmt.Sprintf("%.2f", lastCalculatedTotal) != formattedCalculatedTotal {
+			splitwise.AutoCorrectPaidShares(expense, lastCalculatedTotal, calculatedTotal)
+			expense.Cost = formattedCalculatedTotal
+			form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(formattedCalculatedTotal)
+			lastCalculatedTotal = calculatedTotal
 		}
 
 		// Ensure Owed and Net are calculated properly against the newly corrected (or uncorrected) paid shares
@@ -192,30 +203,46 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 		itemsTable.SetCell(0, 0, tview.NewTableCell("Qty").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
 		itemsTable.SetCell(0, 1, tview.NewTableCell("Description").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignLeft).SetExpansion(1))
-		itemsTable.SetCell(0, 2, tview.NewTableCell("Amount").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
-		itemsTable.SetCell(0, 3, tview.NewTableCell("Shared With (Splits)").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignLeft).SetExpansion(2))
+		totalCol := 2
+		sharedCol := 3
+		if showPerItemColumn {
+			itemsTable.SetCell(0, 2, tview.NewTableCell("Per Item").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
+			totalCol = 3
+			sharedCol = 4
+		}
+		itemsTable.SetCell(0, totalCol, tview.NewTableCell("Total").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
+		itemsTable.SetCell(0, sharedCol, tview.NewTableCell("Shared With (Splits)").SetSelectable(false).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignLeft).SetExpansion(2))
 
 		itemsTable.SetCell(1, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(1, 1, tview.NewTableCell("[ Add Item ]").SetSelectable(true).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
-		itemsTable.SetCell(1, 2, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(1, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(1, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(1, totalCol, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(1, sharedCol, tview.NewTableCell("").SetSelectable(false))
 
 		rowActions[1] = func() {
 			focusBeforeModal = itemsTable
 			isModalOpen = true
-			showPromptForm("Add Item", []string{"Qty", "Description", "Cost"}, []string{"1", "", "0.00"}, func(vals []string) {
-				qty := vals[0]
-				desc := vals[1]
-				if qty != "1" && qty != "" {
-					desc = qty + "x " + desc
+			showPromptForm("Add Item", []string{"Qty", "Description", "Per Item Cost"}, []string{"1", "", "0.00"}, func(vals []string) bool {
+				qty := 1
+				if parsedQty, err := strconv.Atoi(strings.TrimSpace(vals[0])); err == nil && parsedQty > 0 {
+					qty = parsedQty
+				}
+				desc := splitwise.FormatItemDescription(qty, vals[1])
+				perItemCost, err := strconv.ParseFloat(strings.TrimSpace(vals[2]), 64)
+				if err != nil || perItemCost < 0 {
+					app.SetFocus(itemsTable)
+					return false
 				}
 				parsedDetails.Items = append(parsedDetails.Items, splitwise.Item{
 					Description: desc,
-					Amount:      vals[2],
+					Amount:      formatMoney(perItemCost * float64(qty)),
 					SharedWith:  []string{p1, p2}, // Default to both
 				})
 				refreshItemsTable()
 				isModalOpen = false
+				return true
 			}, func() {
 				isModalOpen = false
 				app.SetFocus(itemsTable)
@@ -225,32 +252,45 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 		row := 2
 		var subtotalRender float64
 		for i, item := range parsedDetails.Items {
-			qty := "1"
-			desc := item.Description
-			if parts := strings.SplitN(desc, "x ", 2); len(parts) == 2 {
-				if _, err := strconv.Atoi(parts[0]); err == nil {
-					qty = parts[0]
-					desc = parts[1]
-				}
-			}
+			qtyInt, desc := splitwise.ParseItemDescription(item.Description)
+			qty := strconv.Itoa(qtyInt)
 
 			cost, _ := strconv.ParseFloat(item.Amount, 64)
 			subtotalRender += cost
+			perItemCost := cost / float64(qtyInt)
 
 			sharedWithStr := ""
 			if len(item.SharedWith) > 0 {
 				splitAmt := cost / float64(len(item.SharedWith))
-				var shares []string
+				counts := make(map[string]int)
+				var orderedPeople []string
 				for _, person := range item.SharedWith {
-					shares = append(shares, fmt.Sprintf("%s (%.2f)", person, splitAmt))
+					if counts[person] == 0 {
+						orderedPeople = append(orderedPeople, person)
+					}
+					counts[person]++
+				}
+
+				var shares []string
+				for _, person := range orderedPeople {
+					count := counts[person]
+					totalShare := splitAmt * float64(count)
+					if count > 1 && len(item.SharedWith) == qtyInt {
+						shares = append(shares, fmt.Sprintf("%s (%.2f, %d items)", person, totalShare, count))
+						continue
+					}
+					shares = append(shares, fmt.Sprintf("%s (%.2f)", person, totalShare))
 				}
 				sharedWithStr = strings.Join(shares, ", ")
 			}
 
 			itemsTable.SetCell(row, 0, tview.NewTableCell(qty).SetAlign(tview.AlignCenter).SetTextColor(tcell.ColorWhite))
 			itemsTable.SetCell(row, 1, tview.NewTableCell(desc).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, 2, tview.NewTableCell(item.Amount).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, 3, tview.NewTableCell(sharedWithStr).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
+			if showPerItemColumn {
+				itemsTable.SetCell(row, 2, tview.NewTableCell(formatMoney(perItemCost)).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			}
+			itemsTable.SetCell(row, totalCol, tview.NewTableCell(item.Amount).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, sharedCol, tview.NewTableCell(sharedWithStr).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorWhite))
 
 			rowActions[row] = func(idx int) func() {
 				return func() {
@@ -267,66 +307,252 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 					list := tview.NewList().ShowSecondaryText(true)
 					list.SetBorder(true).SetTitle(fmt.Sprintf("Actions: %s", itemPtr.Description))
 
-					list.AddItem(fmt.Sprintf("%s fully pays", p1), "", '1', func() {
+					list.AddItem(fmt.Sprintf("%s owes full item", p1), "", '1', func() {
 						itemPtr.SharedWith = []string{p1}
 						refreshItemsTable()
 						closeModal()
 					})
-					list.AddItem(fmt.Sprintf("%s fully pays", p2), "", '2', func() {
+					list.AddItem(fmt.Sprintf("%s owes full item", p2), "", '2', func() {
 						itemPtr.SharedWith = []string{p2}
 						refreshItemsTable()
 						closeModal()
 					})
-					list.AddItem("Both half pay for all (50/50)", "", '3', func() {
+					list.AddItem("Both owe half (50/50)", "", '3', func() {
 						itemPtr.SharedWith = []string{p1, p2}
 						refreshItemsTable()
 						closeModal()
 					})
-					list.AddItem(fmt.Sprintf("%s pays N items, %s pays remaining", p1, p2), "Qty split based on '1x ' prefix", '4', func() {
-						showPromptForm("Split N Items", []string{"Items for " + p1, "Items for " + p2}, nil, func(vals []string) {
-							// Stub
-							closeModal()
-						}, func() { app.SetFocus(list) })
-					})
-					list.AddItem("Different %", "Prompt for percentage", '5', func() {
-						showPromptForm("Percentage Split", []string{"% for " + p1, "% for " + p2}, nil, func(vals []string) {
-							// Stub
-							closeModal()
-						}, func() { app.SetFocus(list) })
-					})
-					list.AddItem("Shares", "Prompt for shares", '6', func() {
-						showPromptForm("Shares Split", []string{"Shares for " + p1, "Shares for " + p2}, nil, func(vals []string) {
-							// Stub
-							closeModal()
-						}, func() { app.SetFocus(list) })
-					})
-					list.AddItem("Exact amounts", "Prompt for exact amounts", '7', func() {
-						showPromptForm("Exact Amounts", []string{"Amount for " + p1, "Amount for " + p2}, nil, func(vals []string) {
-							// Stub
-							closeModal()
-						}, func() { app.SetFocus(list) })
-					})
+					list.AddItem(fmt.Sprintf("%s owes N items, %s owes remaining", p1, p2), "Uses item quantity; plain items count as 1", '4', func() {
+						showPromptForm("Split N Items", []string{"Items owed by " + p1, "Items owed by " + p2}, []string{"", ""}, func(vals []string) bool {
+							totalQty, _ := splitwise.ParseItemDescription(itemPtr.Description)
 
-					initQty := "1"
-					initDesc := itemPtr.Description
-					if parts := strings.SplitN(initDesc, "x ", 2); len(parts) == 2 {
-						if _, err := strconv.Atoi(parts[0]); err == nil {
-							initQty = parts[0]
-							initDesc = parts[1]
-						}
-					}
-
-					list.AddItem("Edit item", "Edit description and cost", 'e', func() {
-						showPromptForm("Edit Item", []string{"Qty", "Description", "Cost"}, []string{initQty, initDesc, itemPtr.Amount}, func(vals []string) {
-							qty := vals[0]
-							desc := vals[1]
-							if qty != "1" && qty != "" {
-								desc = qty + "x " + desc
+							p1Raw := strings.TrimSpace(vals[0])
+							p2Raw := strings.TrimSpace(vals[1])
+							if p1Raw == "" && p2Raw == "" {
+								app.SetFocus(list)
+								return false
 							}
-							itemPtr.Description = desc
-							itemPtr.Amount = vals[2]
+
+							p1Qty := 0
+							p2Qty := 0
+							if p1Raw != "" {
+								parsed, err := strconv.Atoi(p1Raw)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p1Qty = parsed
+							}
+							if p2Raw != "" {
+								parsed, err := strconv.Atoi(p2Raw)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p2Qty = parsed
+							}
+
+							switch {
+							case p1Raw == "":
+								p1Qty = totalQty - p2Qty
+							case p2Raw == "":
+								p2Qty = totalQty - p1Qty
+							}
+
+							if p1Qty < 0 || p2Qty < 0 || p1Qty+p2Qty != totalQty {
+								app.SetFocus(list)
+								return false
+							}
+
+							sharedWith := make([]string, 0, totalQty)
+							for i := 0; i < p1Qty; i++ {
+								sharedWith = append(sharedWith, p1)
+							}
+							for i := 0; i < p2Qty; i++ {
+								sharedWith = append(sharedWith, p2)
+							}
+
+							itemPtr.SharedWith = sharedWith
 							refreshItemsTable()
 							closeModal()
+							return true
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Different % owed", "Prompt for percentage", '5', func() {
+						showPromptForm("Percentage Split", []string{"% owed by " + p1, "% owed by " + p2}, nil, func(vals []string) bool {
+							p1Raw := strings.TrimSpace(vals[0])
+							p2Raw := strings.TrimSpace(vals[1])
+							if p1Raw == "" && p2Raw == "" {
+								app.SetFocus(list)
+								return false
+							}
+
+							p1Pct := 0.0
+							p2Pct := 0.0
+							if p1Raw != "" {
+								parsed, err := strconv.ParseFloat(p1Raw, 64)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p1Pct = parsed
+							}
+							if p2Raw != "" {
+								parsed, err := strconv.ParseFloat(p2Raw, 64)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p2Pct = parsed
+							}
+
+							switch {
+							case p1Raw == "":
+								p1Pct = 100 - p2Pct
+							case p2Raw == "":
+								p2Pct = 100 - p1Pct
+							}
+
+							if p1Pct < 0 || p2Pct < 0 || math.Abs((p1Pct+p2Pct)-100) > 0.0001 {
+								app.SetFocus(list)
+								return false
+							}
+
+							totalAmount, err := strconv.ParseFloat(itemPtr.Amount, 64)
+							if err != nil {
+								app.SetFocus(list)
+								return false
+							}
+							totalCents := int(math.Round(totalAmount * 100))
+							p1Cents := int(math.Round((p1Pct / 100) * float64(totalCents)))
+							p2Cents := totalCents - p1Cents
+							itemPtr.SharedWith = buildWeightedSharedWith(p1Cents, p2Cents)
+							closeModal()
+							refreshItemsTable()
+							return true
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Shares owed", "Prompt for shares", '6', func() {
+						showPromptForm("Shares Split", []string{"Shares owed by " + p1, "Shares owed by " + p2}, nil, func(vals []string) bool {
+							p1Raw := strings.TrimSpace(vals[0])
+							p2Raw := strings.TrimSpace(vals[1])
+							if p1Raw == "" && p2Raw == "" {
+								app.SetFocus(list)
+								return false
+							}
+
+							p1Shares := 0
+							p2Shares := 0
+							if p1Raw != "" {
+								parsed, err := strconv.Atoi(p1Raw)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p1Shares = parsed
+							}
+							if p2Raw != "" {
+								parsed, err := strconv.Atoi(p2Raw)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p2Shares = parsed
+							}
+
+							switch {
+							case p1Raw == "":
+								p1Shares = 1
+							case p2Raw == "":
+								p2Shares = 1
+							}
+
+							if p1Shares <= 0 || p2Shares <= 0 {
+								app.SetFocus(list)
+								return false
+							}
+
+							itemPtr.SharedWith = buildWeightedSharedWith(p1Shares, p2Shares)
+							closeModal()
+							refreshItemsTable()
+							return true
+						}, func() { app.SetFocus(list) })
+					})
+					list.AddItem("Exact amounts owed", "Prompt for exact amounts", '7', func() {
+						showPromptForm("Exact Amounts", []string{"Amount owed by " + p1, "Amount owed by " + p2}, nil, func(vals []string) bool {
+							p1Raw := strings.TrimSpace(vals[0])
+							p2Raw := strings.TrimSpace(vals[1])
+							if p1Raw == "" && p2Raw == "" {
+								app.SetFocus(list)
+								return false
+							}
+
+							totalAmount, err := strconv.ParseFloat(itemPtr.Amount, 64)
+							if err != nil {
+								app.SetFocus(list)
+								return false
+							}
+							totalCents := int(math.Round(totalAmount * 100))
+
+							p1Cents := 0
+							p2Cents := 0
+							if p1Raw != "" {
+								parsed, err := strconv.ParseFloat(p1Raw, 64)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p1Cents = int(math.Round(parsed * 100))
+							}
+							if p2Raw != "" {
+								parsed, err := strconv.ParseFloat(p2Raw, 64)
+								if err != nil || parsed < 0 {
+									app.SetFocus(list)
+									return false
+								}
+								p2Cents = int(math.Round(parsed * 100))
+							}
+
+							switch {
+							case p1Raw == "":
+								p1Cents = totalCents - p2Cents
+							case p2Raw == "":
+								p2Cents = totalCents - p1Cents
+							}
+
+							if p1Cents < 0 || p2Cents < 0 || p1Cents+p2Cents != totalCents {
+								app.SetFocus(list)
+								return false
+							}
+
+							itemPtr.SharedWith = buildWeightedSharedWith(p1Cents, p2Cents)
+							closeModal()
+							refreshItemsTable()
+							return true
+						}, func() { app.SetFocus(list) })
+					})
+
+					initQtyInt, initDesc := splitwise.ParseItemDescription(itemPtr.Description)
+					initQty := strconv.Itoa(initQtyInt)
+					initAmount, _ := strconv.ParseFloat(itemPtr.Amount, 64)
+					initPerItemCost := formatMoney(initAmount / float64(initQtyInt))
+
+					list.AddItem("Edit item", "Edit quantity, description, and unit cost", 'e', func() {
+						showPromptForm("Edit Item", []string{"Qty", "Description", "Per Item Cost"}, []string{initQty, initDesc, initPerItemCost}, func(vals []string) bool {
+							qty := 1
+							if parsedQty, err := strconv.Atoi(strings.TrimSpace(vals[0])); err == nil && parsedQty > 0 {
+								qty = parsedQty
+							}
+							perItemCost, err := strconv.ParseFloat(strings.TrimSpace(vals[2]), 64)
+							if err != nil || perItemCost < 0 {
+								app.SetFocus(list)
+								return false
+							}
+							itemPtr.Description = splitwise.FormatItemDescription(qty, vals[1])
+							itemPtr.Amount = formatMoney(perItemCost * float64(qty))
+							refreshItemsTable()
+							closeModal()
+							return true
 						}, func() { app.SetFocus(list) })
 					})
 					list.AddItem("Delete item", "Remove this item", 'd', func() {
@@ -340,10 +566,40 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 						refreshItemsTable()
 						closeModal()
 					})
-					list.AddItem("Split item", "Split out N items if prefixed with >=2x", 's', func() {
-						showPromptForm("Split Item", []string{"Qty to split out (e.g. 1)"}, nil, func(vals []string) {
-							// Stub
+					list.AddItem("Split item", "Split out N quantity units into a new row", 's', func() {
+						showPromptForm("Split Item", []string{"Qty to split out (e.g. 1)"}, nil, func(vals []string) bool {
+							currentQty, currentDesc := splitwise.ParseItemDescription(itemPtr.Description)
+							if currentQty < 2 {
+								app.SetFocus(list)
+								return false
+							}
+							splitQty, err := strconv.Atoi(strings.TrimSpace(vals[0]))
+							if err != nil || splitQty <= 0 || splitQty >= currentQty {
+								app.SetFocus(list)
+								return false
+							}
+
+							totalAmount, _ := strconv.ParseFloat(itemPtr.Amount, 64)
+							perItemCost := totalAmount / float64(currentQty)
+							remainingQty := currentQty - splitQty
+
+							newItem := splitwise.Item{
+								Description: splitwise.FormatItemDescription(splitQty, currentDesc),
+								Amount:      formatMoney(perItemCost * float64(splitQty)),
+								SharedWith:  append([]string{}, itemPtr.SharedWith...),
+							}
+
+							if len(itemPtr.SharedWith) == currentQty {
+								newItem.SharedWith = append([]string{}, itemPtr.SharedWith[:splitQty]...)
+								itemPtr.SharedWith = append([]string{}, itemPtr.SharedWith[splitQty:]...)
+							}
+
+							itemPtr.Description = splitwise.FormatItemDescription(remainingQty, currentDesc)
+							itemPtr.Amount = formatMoney(perItemCost * float64(remainingQty))
+							parsedDetails.Items = append(parsedDetails.Items[:idx+1], append([]splitwise.Item{newItem}, parsedDetails.Items[idx+1:]...)...)
 							closeModal()
+							refreshItemsTable()
+							return true
 						}, func() { app.SetFocus(list) })
 					})
 					list.AddItem("Cancel", "", 'q', closeModal)
@@ -373,14 +629,20 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("---").SetSelectable(false).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell("---").SetSelectable(false).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("---").SetSelectable(false).SetTextColor(tcell.ColorGreen))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell("---").SetSelectable(false).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("Subtotal").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", subtotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell(fmt.Sprintf("%.2f", subtotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
 		var taxTotalRender, tipTotalRender float64
@@ -395,21 +657,29 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("Tax").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", taxTotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell(fmt.Sprintf("%.2f", taxTotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("Tip").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%.2f", tipTotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell(fmt.Sprintf("%.2f", tipTotalRender)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
-		formattedCalculatedTotal = fmt.Sprintf("%.2f", calculatedTotal)
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("Total").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell(formattedCalculatedTotal).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell(formattedCalculatedTotal).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
 		// Re-evaluate totalPaid after possible autocorrection
@@ -424,16 +694,22 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			// Mismatch notification (could not auto-correct cleanly)
 			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 			itemsTable.SetCell(row, 1, tview.NewTableCell("WARNING: Paid != Total").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorRed))
-			itemsTable.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%s != %s", formattedFreshTotalPaid, formattedCalculatedTotal)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorRed))
-			itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+			if showPerItemColumn {
+				itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+			}
+			itemsTable.SetCell(row, totalCol, tview.NewTableCell(fmt.Sprintf("%s != %s", formattedFreshTotalPaid, formattedCalculatedTotal)).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorRed))
+			itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 			row++
 		}
 
 		// Add "Amounts Paid" directly into the items table
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("--- Amounts Paid ---").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
 		for i, eu := range expense.Users {
@@ -445,8 +721,11 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 			itemsTable.SetCell(row, 1, tview.NewTableCell(name).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, 2, tview.NewTableCell(eu.PaidShare).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
-			itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+			if showPerItemColumn {
+				itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+			}
+			itemsTable.SetCell(row, totalCol, tview.NewTableCell(eu.PaidShare).SetSelectable(true).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorWhite))
+			itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 
 			rowActions[row] = func(idx int, userName string) func() {
 				return func() {
@@ -454,24 +733,89 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 					isModalOpen = true
 					euPtr := &expense.Users[idx]
 
-					showPromptForm(fmt.Sprintf("Edit Paid Amount: %s", userName), []string{"Paid Amount"}, []string{euPtr.PaidShare}, func(vals []string) {
-						euPtr.PaidShare = vals[0]
-
-						// Update the main Cost form input field to match total sum of new custom payments
-						var newTotalPaid float64
-						for _, u := range expense.Users {
-							p, _ := strconv.ParseFloat(u.PaidShare, 64)
-							newTotalPaid += p
-						}
-						expense.Cost = fmt.Sprintf("%.2f", newTotalPaid)
-						form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(expense.Cost)
-
-						refreshItemsTable()
+					closeModal := func() {
+						pages.RemovePage("split_modal")
 						isModalOpen = false
-					}, func() {
-						isModalOpen = false
-						app.SetFocus(itemsTable)
+						app.SetFocus(focusBeforeModal)
+					}
+
+					list := tview.NewList().ShowSecondaryText(true)
+					list.SetBorder(true).SetTitle(fmt.Sprintf("Actions: Paid amount for %s", userName))
+
+					list.AddItem("Edit amount", "Manually input paid amount", '1', func() {
+						showPromptForm(fmt.Sprintf("Edit Paid Amount: %s", userName), []string{"Paid Amount"}, []string{euPtr.PaidShare}, func(vals []string) bool {
+							euPtr.PaidShare = vals[0]
+							refreshItemsTable()
+							closeModal()
+							return true
+						}, func() {
+							app.SetFocus(list)
+						})
 					})
+
+					list.AddItem("Paid %", "Calculate paid based on total cost", '2', func() {
+						showPromptForm(fmt.Sprintf("Paid %%: %s", userName), []string{"Percentage (%)"}, []string{"100"}, func(vals []string) bool {
+							perc, err := strconv.ParseFloat(vals[0], 64)
+							if err == nil {
+								euPtr.PaidShare = fmt.Sprintf("%.2f", calculatedTotal*(perc/100.0))
+								refreshItemsTable()
+							}
+							closeModal()
+							return true
+						}, func() {
+							app.SetFocus(list)
+						})
+					})
+
+					list.AddItem("Paid full amount", "Set to calculated total", '3', func() {
+						// Zero out everyone else
+						for ui := range expense.Users {
+							if ui != idx {
+								expense.Users[ui].PaidShare = "0.00"
+							}
+						}
+						euPtr.PaidShare = fmt.Sprintf("%.2f", calculatedTotal)
+						expense.Cost = euPtr.PaidShare
+						form.GetFormItemByLabel("Cost").(*tview.InputField).SetText(expense.Cost)
+						refreshItemsTable()
+						closeModal()
+					})
+
+					if math.Abs(calculatedTotal-freshTotalPaid) > 0.009 {
+						list.AddItem("Paid remainder", "Adjust by the remaining delta to match total", '4', func() {
+							currentPaid, _ := strconv.ParseFloat(euPtr.PaidShare, 64)
+							euPtr.PaidShare = fmt.Sprintf("%.2f", currentPaid+(calculatedTotal-freshTotalPaid))
+							refreshItemsTable()
+							closeModal()
+						})
+					}
+
+					list.AddItem("Paid nothing", "Set paid amount to 0", '5', func() {
+						euPtr.PaidShare = "0.00"
+						refreshItemsTable()
+						closeModal()
+					})
+
+					list.AddItem("Cancel", "", 'q', closeModal)
+
+					list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+						if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyLeft {
+							closeModal()
+							return nil
+						}
+						return event
+					})
+
+					modal := tview.NewFlex().
+						AddItem(nil, 0, 1, false).
+						AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+							AddItem(nil, 0, 1, false).
+							AddItem(list, 15, 1, true).
+							AddItem(nil, 0, 1, false), 60, 1, true).
+						AddItem(nil, 0, 1, false)
+
+					pages.AddPage("split_modal", modal, true, true)
+					app.SetFocus(list)
 				}
 			}(i, name)
 			row++
@@ -480,8 +824,11 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 		// Add "Amounts Owed" Breakdown
 		itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 		itemsTable.SetCell(row, 1, tview.NewTableCell("--- Amounts Owed ---").SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-		itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
-		itemsTable.SetCell(row, 3, tview.NewTableCell("").SetSelectable(false))
+		if showPerItemColumn {
+			itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+		}
+		itemsTable.SetCell(row, totalCol, tview.NewTableCell("").SetSelectable(false))
+		itemsTable.SetCell(row, sharedCol, tview.NewTableCell("").SetSelectable(false))
 		row++
 
 		for _, eu := range expense.Users {
@@ -503,8 +850,11 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 			itemsTable.SetCell(row, 0, tview.NewTableCell("").SetSelectable(false))
 			itemsTable.SetCell(row, 1, tview.NewTableCell(name).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-			itemsTable.SetCell(row, 2, tview.NewTableCell(eu.OwedShare).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
-			itemsTable.SetCell(row, 3, tview.NewTableCell(balanceText).SetSelectable(false).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorGreen))
+			if showPerItemColumn {
+				itemsTable.SetCell(row, 2, tview.NewTableCell("").SetSelectable(false))
+			}
+			itemsTable.SetCell(row, totalCol, tview.NewTableCell(eu.OwedShare).SetSelectable(false).SetAlign(tview.AlignRight).SetTextColor(tcell.ColorGreen))
+			itemsTable.SetCell(row, sharedCol, tview.NewTableCell(balanceText).SetSelectable(false).SetAlign(tview.AlignLeft).SetTextColor(tcell.ColorGreen))
 			row++
 		}
 	}

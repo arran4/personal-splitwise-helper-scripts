@@ -109,6 +109,26 @@ type PersonAmount struct {
 	Amount string
 }
 
+func ParseItemDescription(description string) (int, string) {
+	qty := 1
+	desc := strings.TrimSpace(description)
+	if parts := strings.SplitN(desc, "x ", 2); len(parts) == 2 {
+		if parsedQty, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil && parsedQty > 0 {
+			qty = parsedQty
+			desc = strings.TrimSpace(parts[1])
+		}
+	}
+	return qty, desc
+}
+
+func FormatItemDescription(qty int, description string) string {
+	description = strings.TrimSpace(description)
+	if qty <= 1 {
+		return description
+	}
+	return fmt.Sprintf("%dx %s", qty, description)
+}
+
 func ParseDetails(details string) *ItemizedDetail {
 	if details == "" {
 		return nil
@@ -272,13 +292,16 @@ func CalculateOwed(expense *DetailedExpense, details *ItemizedDetail) {
 	}
 }
 
-// AutoCorrectPaidShares updates the PaidShare amounts based on rules if Total changes
-func AutoCorrectPaidShares(expense *DetailedExpense, calculatedTotal float64) {
+// AutoCorrectPaidShares updates the PaidShare amounts when the calculated total changes.
+// If no one has paid anything yet, the full amount is assigned to the first user.
+// If exactly one person has paid, their amount is adjusted by the delta between totals.
+func AutoCorrectPaidShares(expense *DetailedExpense, previousTotal, calculatedTotal float64) {
 	if expense == nil || len(expense.Users) == 0 {
 		return
 	}
 
 	formattedCalculatedTotal := fmt.Sprintf("%.2f", calculatedTotal)
+	formattedPreviousTotal := fmt.Sprintf("%.2f", previousTotal)
 
 	var totalPaid float64
 	var paidCounts int
@@ -294,14 +317,15 @@ func AutoCorrectPaidShares(expense *DetailedExpense, calculatedTotal float64) {
 
 	formattedTotalPaid := fmt.Sprintf("%.2f", totalPaid)
 
-	if formattedTotalPaid != formattedCalculatedTotal {
+	if formattedPreviousTotal != formattedCalculatedTotal && formattedTotalPaid != formattedCalculatedTotal {
 		if math.Abs(totalPaid) < 0.01 {
 			// No one is paying, assign all to first payee
 			expense.Users[0].PaidShare = formattedCalculatedTotal
 			expense.Cost = formattedCalculatedTotal
 		} else if paidCounts == 1 {
-			// Only 1 person has paid, update them with the new total
-			expense.Users[onlyPaidIdx].PaidShare = formattedCalculatedTotal
+			// Only 1 person has paid, preserve their manual offset by applying the total delta.
+			paid, _ := strconv.ParseFloat(expense.Users[onlyPaidIdx].PaidShare, 64)
+			expense.Users[onlyPaidIdx].PaidShare = fmt.Sprintf("%.2f", paid+(calculatedTotal-previousTotal))
 			expense.Cost = formattedCalculatedTotal
 		}
 		// If multiple people paid, leave it alone (UI will warn)

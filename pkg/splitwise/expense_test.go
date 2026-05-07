@@ -168,6 +168,43 @@ func TestParseDetails(t *testing.T) {
 	}
 }
 
+func TestParseAndFormatItemDescription(t *testing.T) {
+	tests := []struct {
+		name        string
+		description string
+		wantQty     int
+		wantDesc    string
+		wantFormat  string
+	}{
+		{
+			name:        "plain item defaults to quantity one",
+			description: "Burger",
+			wantQty:     1,
+			wantDesc:    "Burger",
+			wantFormat:  "Burger",
+		},
+		{
+			name:        "quantity-prefixed item is parsed",
+			description: "3x Taco",
+			wantQty:     3,
+			wantDesc:    "Taco",
+			wantFormat:  "3x Taco",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotQty, gotDesc := ParseItemDescription(tt.description)
+			if gotQty != tt.wantQty || gotDesc != tt.wantDesc {
+				t.Fatalf("ParseItemDescription() = (%d, %q), want (%d, %q)", gotQty, gotDesc, tt.wantQty, tt.wantDesc)
+			}
+			if got := FormatItemDescription(gotQty, gotDesc); got != tt.wantFormat {
+				t.Fatalf("FormatItemDescription() = %q, want %q", got, tt.wantFormat)
+			}
+		})
+	}
+}
+
 func TestCalculateOwed(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -249,6 +286,30 @@ func TestCalculateOwed(t *testing.T) {
 			wantOwed: []string{"12.00", "13.00"},  // Alice: 10 + 2 + 0, Bob: 10 + 0 + 3
 			wantNet:  []string{"13.00", "-13.00"}, // 25-12=13, 0-13=-13
 		},
+		{
+			name: "item quantity split by repeated owners",
+			expense: DetailedExpense{
+				Users: []ExpenseUser{
+					{
+						User:      User{FirstName: "Alice"},
+						PaidShare: "9.00",
+					},
+					{
+						User:      User{FirstName: "Bob"},
+						PaidShare: "0.00",
+					},
+				},
+			},
+			details: ItemizedDetail{
+				Items: []Item{
+					{Description: "3x Taco", Amount: "9.00", SharedWith: []string{"Alice", "Alice", "Bob"}},
+				},
+				Tax: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}},
+				Tip: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}},
+			},
+			wantOwed: []string{"6.00", "3.00"},
+			wantNet:  []string{"3.00", "-3.00"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -272,6 +333,7 @@ func TestAutoCorrectPaidShares(t *testing.T) {
 	tests := []struct {
 		name            string
 		expense         DetailedExpense
+		previousTotal   float64
 		calculatedTotal float64
 		wantPaidShares  []string
 		wantCost        string
@@ -285,21 +347,23 @@ func TestAutoCorrectPaidShares(t *testing.T) {
 				},
 				Cost: "0.00",
 			},
+			previousTotal:   0.00,
 			calculatedTotal: 25.50,
 			wantPaidShares:  []string{"25.50", "0.00"},
 			wantCost:        "25.50",
 		},
 		{
-			name: "one person paying - update their total",
+			name: "one person paying - apply delta to their paid share",
 			expense: DetailedExpense{
 				Users: []ExpenseUser{
 					{User: User{FirstName: "Alice"}, PaidShare: "0.00"},
-					{User: User{FirstName: "Bob"}, PaidShare: "15.00"},
+					{User: User{FirstName: "Bob"}, PaidShare: "10.00"},
 				},
 				Cost: "15.00",
 			},
+			previousTotal:   15.00,
 			calculatedTotal: 20.00,
-			wantPaidShares:  []string{"0.00", "20.00"},
+			wantPaidShares:  []string{"0.00", "15.00"},
 			wantCost:        "20.00",
 		},
 		{
@@ -311,15 +375,30 @@ func TestAutoCorrectPaidShares(t *testing.T) {
 				},
 				Cost: "15.00",
 			},
+			previousTotal:   15.00,
 			calculatedTotal: 20.00,
 			wantPaidShares:  []string{"10.00", "5.00"}, // Unchanged
 			wantCost:        "15.00",                   // Unchanged
+		},
+		{
+			name: "same calculated total - preserve manual sole payer edit",
+			expense: DetailedExpense{
+				Users: []ExpenseUser{
+					{User: User{FirstName: "Alice"}, PaidShare: "8.00"},
+					{User: User{FirstName: "Bob"}, PaidShare: "0.00"},
+				},
+				Cost: "12.00",
+			},
+			previousTotal:   12.00,
+			calculatedTotal: 12.00,
+			wantPaidShares:  []string{"8.00", "0.00"},
+			wantCost:        "12.00",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			AutoCorrectPaidShares(&tt.expense, tt.calculatedTotal)
+			AutoCorrectPaidShares(&tt.expense, tt.previousTotal, tt.calculatedTotal)
 
 			if tt.expense.Cost != tt.wantCost {
 				t.Errorf("Expense Cost = %s, want %s", tt.expense.Cost, tt.wantCost)
