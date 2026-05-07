@@ -20,7 +20,7 @@ import (
 
 func handleImport(args []string) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: expenses import <doordash|bunnings|amazon> email text [--mode auto|new|update] [--stdin] [--id <expense-id>] [--group-id <id>|--friend-id <id>]")
+		return fmt.Errorf("usage: expenses import <doordash|bunnings|amazon|woolworths> email text [--mode auto|new|update] [--stdin] [--id <expense-id>] [--group-id <id>|--friend-id <id>]")
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(args[0]))
@@ -62,6 +62,8 @@ func handleImport(args []string) error {
 		parsed, err = importers.ParseBunningsEmailText(text)
 	case "amazon":
 		parsed, err = importers.ParseAmazonEmailText(text)
+	case "woolworths":
+		parsed, err = importers.ParseWoolworthsEmailText(text)
 	default:
 		return fmt.Errorf("unsupported import source %q %q %q", provider, channel, format)
 	}
@@ -234,24 +236,40 @@ func rankImportedExpenseMatches(parsed *importers.ParsedExpense, expenses []spli
 }
 
 func chooseImportedExpenseMatch(parsed *importers.ParsedExpense, matches []importedExpenseMatch) (string, bool, error) {
-	options := make([]tui.SelectionOption, 0, len(matches)+1)
-	options = append(options, tui.SelectionOption{
-		Label: fmt.Sprintf("New Expense | %s | %s | %d item(s)", parsed.Merchant, parsed.Total, len(parsed.Items)),
+	rows := make([]tui.TableSelectionOption, 0, len(matches)+1)
+	rows = append(rows, tui.TableSelectionOption{
+		Cells:       []string{"New", "", parsed.Merchant, "Create new expense", parsed.Total},
+		FilterValue: strings.Join([]string{"new expense", parsed.Merchant, parsed.Total, strconv.Itoa(len(parsed.Items)) + " items"}, " "),
 	})
 	for _, match := range matches {
 		expense := match.expense
-		label := fmt.Sprintf(
-			"#%d | %s | %s | %s %s | score %.2f",
-			expense.ID,
-			expense.Date,
-			expense.Description,
-			expense.Cost,
-			expense.Currency,
-			match.score,
-		)
-		options = append(options, tui.SelectionOption{Label: label})
+		cost := fmt.Sprintf("%s %s", expense.Cost, expense.Currency)
+		rows = append(rows, tui.TableSelectionOption{
+			Cells: []string{
+				strconv.Itoa(expense.ID),
+				expense.Date,
+				expense.Description,
+				fmt.Sprintf("score %.2f", match.score),
+				cost,
+			},
+			FilterValue: strings.Join([]string{
+				strconv.Itoa(expense.ID),
+				expense.Date,
+				expense.Description,
+				expense.Cost,
+				expense.Currency,
+				fmt.Sprintf("%.2f", match.score),
+			}, " "),
+		})
 	}
-	selected, err := tui.SelectOption(importUpdateSelectionTitle(parsed), options, importMatchSelectionFooter(parsed, len(matches)), nil)
+	selected, err := tui.SelectTableOption(
+		importUpdateSelectionTitle(parsed),
+		[]string{"ID", "Date", "Description", "Status", "Cost"},
+		rows,
+		importMatchSelectionFooter(parsed, len(matches)),
+		false,
+		nil,
+	)
 	if err != nil {
 		return "", false, err
 	}
