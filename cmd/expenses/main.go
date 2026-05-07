@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -189,6 +190,7 @@ func main() {
 		editCmd := flag.NewFlagSet("edit", flag.ExitOnError)
 		id := editCmd.String("id", "", "ID of the expense to edit")
 		refresh := editCmd.Bool("refresh", false, "Force refresh from API instead of using cache")
+		verbose := editCmd.Bool("verbose", false, "Print the full server success payload after send")
 
 		editCmd.Parse(os.Args[2:])
 
@@ -212,7 +214,7 @@ func main() {
 			}
 		}
 
-		sent, err := tui.EditExpense(&resp.Expense)
+		sent, sendResponse, err := tui.EditExpense(&resp.Expense)
 		if err != nil {
 			fmt.Println("Error running TUI:", err)
 			os.Exit(1)
@@ -221,7 +223,16 @@ func main() {
 			if err := invalidateExpenseCache(*id); err != nil {
 				fmt.Println("Warning: could not invalidate cache:", err)
 			}
-			fmt.Println("success")
+			if *verbose && len(sendResponse) > 0 {
+				var pretty bytes.Buffer
+				if err := json.Indent(&pretty, sendResponse, "", "  "); err == nil {
+					fmt.Println(pretty.String())
+				} else {
+					fmt.Println(string(sendResponse))
+				}
+			} else {
+				fmt.Println("success")
+			}
 		}
 
 	default:

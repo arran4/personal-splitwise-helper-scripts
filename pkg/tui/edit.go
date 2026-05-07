@@ -15,9 +15,10 @@ import (
 	"github.com/rivo/tview"
 )
 
-func EditExpense(expense *splitwise.DetailedExpense) (bool, error) {
+func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 	app := tview.NewApplication()
 	sent := false
+	var sendResponse []byte
 
 	// Title
 	title := tview.NewTextView().
@@ -266,12 +267,14 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, error) {
 			showMessageModal("Send Error", err.Error())
 			return
 		}
-		if _, err := client.UpdateExpense(&current); err != nil {
+		response, err := client.UpdateExpense(&current)
+		if err != nil {
 			showMessageModal("Send Error", err.Error())
 			return
 		}
 		*expense = current
 		sent = true
+		sendResponse = response
 		app.Stop()
 	}).AddButton("Quit", func() {
 		app.Stop()
@@ -1089,8 +1092,8 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, error) {
 	})
 
 	if err := app.SetRoot(pages, true).SetFocus(focusables[0]).Run(); err != nil {
-		return false, err
+		return false, nil, err
 	}
 
-	return sent, nil
+	return sent, sendResponse, nil
 }
