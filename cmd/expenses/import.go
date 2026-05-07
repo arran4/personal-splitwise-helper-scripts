@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -228,6 +229,8 @@ type importedExpenseMatch struct {
 	score   float64
 }
 
+var importOrderNumberPattern = regexp.MustCompile(`\b\d{9}\b|\b\d{3}-\d{7}-\d{7}\b`)
+
 func findImportedExpenseMatches(parsed *importers.ParsedExpense, opts expenseListOptions) ([]importedExpenseMatch, error) {
 	if parsed == nil || strings.TrimSpace(parsed.Merchant) == "" {
 		return nil, nil
@@ -342,6 +345,9 @@ func importedExpenseMatchScore(parsed *importers.ParsedExpense, expense splitwis
 	if normalizeImportMatchText(expense.Description) == normalizeImportMatchText(parsed.Merchant) {
 		score += 2
 	}
+	if orderNumber := importMatchOrderNumber(parsed.Merchant); orderNumber != "" && strings.Contains(expense.Description, orderNumber) {
+		score += 4
+	}
 
 	importTotal := floatFromMoney(parsed.Total)
 	expenseTotal := floatFromMoney(expense.Cost)
@@ -361,6 +367,10 @@ func importedExpenseMatchScore(parsed *importers.ParsedExpense, expense splitwis
 		score += 0.1
 	}
 	return score
+}
+
+func importMatchOrderNumber(s string) string {
+	return importOrderNumberPattern.FindString(s)
 }
 
 func importUpdateSelectionTitle(parsed *importers.ParsedExpense) string {

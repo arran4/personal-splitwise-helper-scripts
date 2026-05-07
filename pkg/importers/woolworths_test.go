@@ -115,3 +115,53 @@ Paid with Credit Card: 23.89`
 	}
 	assertTotalsMatch(t, parsed)
 }
+
+func TestParseWoolworthsEmailTextUpdatedOrder(t *testing.T) {
+	text := `Hi Example Person,
+
+Your order has been successfully updated with the changes you submitted recently.
+Updated order details
+
+New order number
+284249921
+
+Your groceries will arrive on
+Saturday, 20 December 2025
+between 12:00 pm - 01:00 pm
+
+They'll be delivered to
+Unit 1 123 Example Street Example
+
+Your Groceries
+Item Description: Unit Price: Quantity: Price:
+Lyndale 12 Gippsland's Own Jumbo Cage Free Eggs 6.60 1.00 6.60
+Woolworths Cumin Ground Ground 2.00 2.00 3.50
+Subtotal: 10.10
+Delivery fee 0.00
+Paper bags 2.00
+Estimated amount to be charged: 12.10
+Paid with Credit Card: 12.10`
+
+	parsed, err := ParseWoolworthsEmailText(text)
+	if err != nil {
+		t.Fatalf("ParseWoolworthsEmailText() unexpected error: %v", err)
+	}
+	if parsed.Merchant != "Woolworths Order #284249921" {
+		t.Fatalf("Merchant = %q, want %q", parsed.Merchant, "Woolworths Order #284249921")
+	}
+	if parsed.SuggestedMode != ImportModeUpdate {
+		t.Fatalf("SuggestedMode = %q, want %q", parsed.SuggestedMode, ImportModeUpdate)
+	}
+	assertParsedLineItemsEqual(t, parsed.Items, []ParsedLineItem{
+		{Description: "Lyndale 12 Gippsland's Own Jumbo Cage Free Eggs", Extra: "", Quantity: 1, Amount: "6.60"},
+		{Description: "Woolworths Cumin Ground Ground", Extra: "", Quantity: 2, Amount: "3.50"},
+	})
+	expectedNotes := `Imported from Woolworths email text
+Order Number: 284249921
+Delivery: Unit 1 123 Example Street Example
+Saturday, 20 December 2025
+between 12:00 pm - 01:00 pm`
+	if parsed.Notes != expectedNotes {
+		t.Fatalf("Notes = %q, want %q", parsed.Notes, expectedNotes)
+	}
+}

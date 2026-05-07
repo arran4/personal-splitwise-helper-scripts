@@ -222,3 +222,20 @@ func TestResolveFriendPaidUserIDRejectsNonPairExpense(t *testing.T) {
 		t.Fatalf("resolveFriendPaidUserID() expected error, got nil")
 	}
 }
+
+func TestImportedExpenseMatchScoreBoostsOrderNumber(t *testing.T) {
+	parsed := &importers.ParsedExpense{
+		Merchant: "Woolworths Order #284249921",
+		Total:    "149.09",
+		Items:    []importers.ParsedLineItem{{Description: "Item", Quantity: 1, Amount: "1.00"}},
+	}
+	withOrderNumber := splitwise.Expense{ID: 1, Description: "Woolworths Order #284249921 (149.09 AUD)", Cost: "149.09"}
+	withoutOrderNumber := splitwise.Expense{ID: 2, Description: "Woolworths grocery delivery", Cost: "149.09"}
+
+	withScore := importedExpenseMatchScore(parsed, withOrderNumber)
+	withoutScore := importedExpenseMatchScore(parsed, withoutOrderNumber)
+
+	if withScore <= withoutScore {
+		t.Fatalf("with order number score = %f, without order number score = %f, want with > without", withScore, withoutScore)
+	}
+}
