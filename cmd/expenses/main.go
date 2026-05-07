@@ -203,6 +203,15 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Lazily fetch current user if not cached
+		if _, err := os.Stat(filepath.Join(CacheDir, "current_user.json")); os.IsNotExist(err) {
+			fmt.Println("Current user not cached, fetching...")
+			if err := fetchCurrentUser(); err != nil {
+				fmt.Println("Could not fetch current user:", err)
+				os.Exit(1)
+			}
+		}
+
 		if err := tui.EditExpense(&resp.Expense); err != nil {
 			fmt.Println("Error running TUI:", err)
 			os.Exit(1)
@@ -251,4 +260,28 @@ func fetchExpense(id string, refresh bool) (*splitwise.ExpenseResponse, error) {
 	}
 
 	return &resp, nil
+}
+
+func fetchCurrentUser() error {
+	client, err := splitwise.NewClient()
+	if err != nil {
+		return fmt.Errorf("initializing client: %w", err)
+	}
+
+	data, err := client.GetCurrentUser()
+	if err != nil {
+		return fmt.Errorf("fetching current user: %w", err)
+	}
+
+	if err := os.MkdirAll(CacheDir, 0755); err != nil {
+		return fmt.Errorf("creating cache directory: %w", err)
+	}
+
+	cachePath := filepath.Join(CacheDir, "current_user.json")
+	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+		return fmt.Errorf("writing to cache file: %w", err)
+	}
+
+	fmt.Printf("Successfully fetched current user and cached to %s\n", cachePath)
+	return nil
 }

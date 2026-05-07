@@ -58,3 +58,7 @@ func (c *Client) GetExpenses(query string) ([]byte, error) {
 func (c *Client) GetExpense(id string) ([]byte, error) {
 	return c.doRequest("GET", fmt.Sprintf("/get_expense/%s", id), nil)
 }
+
+func (c *Client) GetCurrentUser() ([]byte, error) {
+	return c.doRequest("GET", "/get_current_user", nil)
+}

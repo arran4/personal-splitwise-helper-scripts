@@ -25,6 +25,16 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 	}
 	notesText := parsedDetails.Notes
 
+	// Ensure currency defaults to AUD if not set, though it should be pulled from User
+	if expense.CurrencyCode == "" {
+		expense.CurrencyCode = "AUD"
+
+		currentUser, err := splitwise.GetCachedCurrentUser(".cache")
+		if err == nil && currentUser.DefaultCurrency != "" {
+			expense.CurrencyCode = currentUser.DefaultCurrency
+		}
+	}
+
 	// Basic Info Form
 	form := tview.NewForm().
 		AddInputField("Description", expense.Description, 40, nil, func(text string) {
@@ -32,6 +42,9 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 		}).
 		AddInputField("Cost", expense.Cost, 20, nil, func(text string) {
 			expense.Cost = text
+		}).
+		AddInputField("Currency", expense.CurrencyCode, 10, nil, func(text string) {
+			expense.CurrencyCode = text
 		}).
 		AddInputField("Date", expense.Date, 25, nil, func(text string) {
 			expense.Date = text
@@ -85,6 +98,22 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 					currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
 					user.OwedShare = fmt.Sprintf("%.2f", currentOwed+splitAmt)
 				}
+			}
+		}
+
+		for _, item := range parsedDetails.Tax {
+			if user, ok := userMap[item.Name]; ok {
+				cost, _ := strconv.ParseFloat(item.Amount, 64)
+				currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
+				user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
+			}
+		}
+
+		for _, item := range parsedDetails.Tip {
+			if user, ok := userMap[item.Name]; ok {
+				cost, _ := strconv.ParseFloat(item.Amount, 64)
+				currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
+				user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
 			}
 		}
 
@@ -254,6 +283,7 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 	pages.AddPage("main", rootFlex, true, true)
 
 	isModalOpen := false
+	var focusBeforeModal tview.Primitive
 
 	showPromptForm := func(title string, fields []string, initialValues []string, onSubmit func(values []string), onCancel func()) {
 		promptForm := tview.NewForm()
@@ -271,6 +301,9 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			}
 			onSubmit(vals)
 			pages.RemovePage("prompt_modal")
+
+			// Set focus back to what it was
+			app.SetFocus(focusBeforeModal)
 		})
 		promptForm.AddButton("Cancel", func() {
 			pages.RemovePage("prompt_modal")
@@ -304,16 +337,17 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 
 		name := splitTable.GetCell(row, 0).Text
 
+		focusBeforeModal = splitTable
+		isModalOpen = true
+
 		showPromptForm(fmt.Sprintf("Edit Paid Amount: %s", name), []string{"Paid Amount"}, []string{eu.PaidShare}, func(vals []string) {
 			eu.PaidShare = vals[0]
 			refreshItemsTable()
 			isModalOpen = false
-			app.SetFocus(splitTable)
 		}, func() {
 			isModalOpen = false
 			app.SetFocus(splitTable)
 		})
-		isModalOpen = true
 	})
 
 	// Items table action handling
@@ -322,10 +356,13 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 			return
 		}
 
+		focusBeforeModal = itemsTable
+		isModalOpen = true
+
 		closeModal := func() {
 			pages.RemovePage("split_modal")
 			isModalOpen = false
-			app.SetFocus(itemsTable)
+			app.SetFocus(focusBeforeModal)
 		}
 
 		if row == 1 { // Add Item
@@ -342,17 +379,16 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 				})
 				refreshItemsTable()
 				isModalOpen = false
-				app.SetFocus(itemsTable)
 			}, func() {
 				isModalOpen = false
 				app.SetFocus(itemsTable)
 			})
-			isModalOpen = true
 			return
 		}
 
 		itemIdx := row - 2
 		if itemIdx < 0 || itemIdx >= len(parsedDetails.Items) {
+			isModalOpen = false
 			return
 		}
 		item := &parsedDetails.Items[itemIdx]
@@ -458,7 +494,6 @@ func EditExpense(expense *splitwise.DetailedExpense) error {
 				AddItem(nil, 0, 1, false), 60, 1, true).
 			AddItem(nil, 0, 1, false)
 
-		isModalOpen = true
 		pages.AddPage("split_modal", modal, true, true)
 		app.SetFocus(list)
 	})
