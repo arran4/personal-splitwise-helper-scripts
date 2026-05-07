@@ -21,7 +21,7 @@ const CacheDir = ".cache"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: expenses <list|show|edit|new> [options]")
+		fmt.Println("Usage: expenses <list|show|edit|new|import> [options]")
 		os.Exit(1)
 	}
 
@@ -250,6 +250,12 @@ func main() {
 			} else {
 				fmt.Println("success")
 			}
+		}
+
+	case "import":
+		if err := handleImport(os.Args[2:]); err != nil {
+			fmt.Println("Error importing expense:", err)
+			os.Exit(1)
 		}
 
 	default:

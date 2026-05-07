@@ -2,7 +2,9 @@ package splitwise
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -110,6 +112,12 @@ type Item struct {
 type PersonAmount struct {
 	Name   string
 	Amount string
+}
+
+type shareUnit struct {
+	name      string
+	paidCents int
+	order     int
 }
 
 func SerializeDetails(details *ItemizedDetail) string {
@@ -427,6 +435,7 @@ func CalculateOwed(expense *DetailedExpense, details *ItemizedDetail) {
 	}
 
 	userMap := make(map[string]*ExpenseUser)
+	owedCents := make(map[string]int)
 	for i, eu := range expense.Users {
 		lastName := ""
 		if eu.User.LastName != nil {
@@ -437,47 +446,122 @@ func CalculateOwed(expense *DetailedExpense, details *ItemizedDetail) {
 
 		// Reset owed to 0 for recalculation
 		expense.Users[i].OwedShare = "0.00"
+		owedCents[name] = 0
 	}
 
 	// Add items
 	for _, item := range details.Items {
-		cost, err := strconv.ParseFloat(item.Amount, 64)
-		if err != nil || len(item.SharedWith) == 0 {
+		if len(item.SharedWith) == 0 {
 			continue
 		}
-		splitAmt := cost / float64(len(item.SharedWith))
-		for _, personName := range item.SharedWith {
-			if user, ok := userMap[personName]; ok {
-				currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
-				user.OwedShare = fmt.Sprintf("%.2f", currentOwed+splitAmt)
-			}
+		allocateItemOwedCents(userMap, owedCents, item.Amount, item.SharedWith)
+	}
+
+	applyNamedAmount := func(name, amount string) {
+		if _, ok := userMap[name]; !ok {
+			return
 		}
+		owedCents[name] += moneyStringToCents(amount)
 	}
 
 	// Add tax
 	for _, item := range details.Tax {
-		if user, ok := userMap[item.Name]; ok {
-			cost, _ := strconv.ParseFloat(item.Amount, 64)
-			currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
-			user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
-		}
+		applyNamedAmount(item.Name, item.Amount)
 	}
 
 	// Add tip
 	for _, item := range details.Tip {
-		if user, ok := userMap[item.Name]; ok {
-			cost, _ := strconv.ParseFloat(item.Amount, 64)
-			currentOwed, _ := strconv.ParseFloat(user.OwedShare, 64)
-			user.OwedShare = fmt.Sprintf("%.2f", currentOwed+cost)
-		}
+		applyNamedAmount(item.Name, item.Amount)
 	}
 
 	// Update NetBalance
 	for i := range expense.Users {
+		lastName := ""
+		if expense.Users[i].User.LastName != nil {
+			lastName = *expense.Users[i].User.LastName
+		}
+		name := strings.TrimSpace(fmt.Sprintf("%s %s", expense.Users[i].User.FirstName, lastName))
+		expense.Users[i].OwedShare = centsToMoneyString(owedCents[name])
 		paid, _ := strconv.ParseFloat(expense.Users[i].PaidShare, 64)
 		owed, _ := strconv.ParseFloat(expense.Users[i].OwedShare, 64)
 		expense.Users[i].NetBalance = fmt.Sprintf("%.2f", paid-owed)
 	}
+}
+
+func allocateItemOwedCents(userMap map[string]*ExpenseUser, owedCents map[string]int, amount string, sharedWith []string) {
+	totalCents := moneyStringToCents(amount)
+	if totalCents == 0 || len(sharedWith) == 0 {
+		return
+	}
+
+	baseCents := totalCents / len(sharedWith)
+	remainder := totalCents % len(sharedWith)
+
+	units := make([]shareUnit, 0, len(sharedWith))
+	for i, personName := range sharedWith {
+		user, ok := userMap[personName]
+		if !ok {
+			continue
+		}
+		units = append(units, shareUnit{
+			name:      personName,
+			paidCents: moneyStringToCents(user.PaidShare),
+			order:     i,
+		})
+	}
+	if len(units) == 0 {
+		return
+	}
+
+	for _, unit := range units {
+		owedCents[unit.name] += baseCents
+	}
+
+	if remainder <= 0 {
+		return
+	}
+
+	sort.SliceStable(units, func(i, j int) bool {
+		if units[i].paidCents != units[j].paidCents {
+			return units[i].paidCents < units[j].paidCents
+		}
+		return units[i].order < units[j].order
+	})
+
+	start := 0
+	if remainder > 1 {
+		start = stableRemainderStart(amount, units)
+	}
+
+	for i := 0; i < remainder && i < len(units); i++ {
+		unit := units[(start+i)%len(units)]
+		owedCents[unit.name]++
+	}
+}
+
+func stableRemainderStart(amount string, units []shareUnit) int {
+	if len(units) == 0 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(amount))
+	for _, unit := range units {
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(unit.name))
+	}
+	return int(h.Sum32() % uint32(len(units)))
+}
+
+func moneyStringToCents(amount string) int {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(amount), 64)
+	if err != nil {
+		return 0
+	}
+	return int(math.Round(parsed * 100))
+}
+
+func centsToMoneyString(cents int) string {
+	return fmt.Sprintf("%.2f", float64(cents)/100.0)
 }
 
 // AutoCorrectPaidShares updates the PaidShare amounts when the calculated total changes.

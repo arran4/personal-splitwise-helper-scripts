@@ -1,7 +1,10 @@
 package splitwise
 
 import (
+	"math"
 	"reflect"
+	"sort"
+	"strconv"
 	"testing"
 )
 
@@ -414,12 +417,111 @@ func TestCalculateOwed(t *testing.T) {
 			wantOwed: []string{"6.00", "3.00"},
 			wantNet:  []string{"3.00", "-3.00"},
 		},
+		{
+			name: "half cent split gives remainder to non payer",
+			expense: DetailedExpense{
+				Users: []ExpenseUser{
+					{
+						User:      User{FirstName: "Alice"},
+						PaidShare: "0.01",
+					},
+					{
+						User:      User{FirstName: "Bob"},
+						PaidShare: "0.00",
+					},
+				},
+			},
+			details: ItemizedDetail{
+				Items: []Item{
+					{Description: "Mint", Amount: "0.01", SharedWith: []string{"Alice", "Bob"}},
+				},
+				Tax: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}},
+				Tip: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}},
+			},
+			wantOwed: []string{"0.00", "0.01"},
+			wantNet:  []string{"0.01", "-0.01"},
+		},
+		{
+			name: "half cent split gives remainder away from payer regardless of order",
+			expense: DetailedExpense{
+				Users: []ExpenseUser{
+					{
+						User:      User{FirstName: "Alice"},
+						PaidShare: "0.00",
+					},
+					{
+						User:      User{FirstName: "Bob"},
+						PaidShare: "0.01",
+					},
+				},
+			},
+			details: ItemizedDetail{
+				Items: []Item{
+					{Description: "Mint", Amount: "0.01", SharedWith: []string{"Alice", "Bob"}},
+				},
+				Tax: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}},
+				Tip: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}},
+			},
+			wantOwed: []string{"0.01", "0.00"},
+			wantNet:  []string{"-0.01", "0.01"},
+		},
+		{
+			name: "multiple remainder cents are distributed exactly",
+			expense: DetailedExpense{
+				Users: []ExpenseUser{
+					{User: User{FirstName: "Alice"}, PaidShare: "0.00"},
+					{User: User{FirstName: "Bob"}, PaidShare: "0.00"},
+					{User: User{FirstName: "Carol"}, PaidShare: "0.00"},
+				},
+			},
+			details: ItemizedDetail{
+				Items: []Item{
+					{Description: "Snack", Amount: "1.01", SharedWith: []string{"Alice", "Bob", "Carol"}},
+				},
+				Tax: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}, {Name: "Carol", Amount: "0.00"}},
+				Tip: []PersonAmount{{Name: "Alice", Amount: "0.00"}, {Name: "Bob", Amount: "0.00"}, {Name: "Carol", Amount: "0.00"}},
+			},
+			wantOwed: nil,
+			wantNet:  nil,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Calculate updates tt.expense in place
 			CalculateOwed(&tt.expense, &tt.details)
+
+			if tt.name == "multiple remainder cents are distributed exactly" {
+				var total float64
+				var owed []string
+				for _, eu := range tt.expense.Users {
+					owed = append(owed, eu.OwedShare)
+					value, _ := strconv.ParseFloat(eu.OwedShare, 64)
+					total += value
+				}
+				if math.Abs(total-1.01) > 0.0001 {
+					t.Fatalf("total owed = %.2f, want 1.01", total)
+				}
+				sorted := append([]string(nil), owed...)
+				sort.Strings(sorted)
+				wantSorted := []string{"0.33", "0.34", "0.34"}
+				if !reflect.DeepEqual(sorted, wantSorted) {
+					t.Fatalf("sorted owed shares = %+v, want %+v", sorted, wantSorted)
+				}
+
+				repeatExpense := tt.expense
+				for i := range repeatExpense.Users {
+					repeatExpense.Users[i].OwedShare = "0.00"
+					repeatExpense.Users[i].NetBalance = "0.00"
+				}
+				CalculateOwed(&repeatExpense, &tt.details)
+				for i := range tt.expense.Users {
+					if tt.expense.Users[i].OwedShare != repeatExpense.Users[i].OwedShare {
+						t.Fatalf("owed share changed between recalculations: first=%q second=%q", tt.expense.Users[i].OwedShare, repeatExpense.Users[i].OwedShare)
+					}
+				}
+				return
+			}
 
 			for i, eu := range tt.expense.Users {
 				if eu.OwedShare != tt.wantOwed[i] {
