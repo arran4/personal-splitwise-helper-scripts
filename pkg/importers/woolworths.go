@@ -126,12 +126,17 @@ func parseWoolworthsItems(lines []string) ([]ParsedLineItem, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing Woolworths quantity from %q: %w", lines[i], err)
 		}
-		if qtyFloat != float64(int(qtyFloat)) {
-			return nil, fmt.Errorf("non-integer Woolworths quantity in %q", lines[i])
+		qty := 1
+		extraLines := []string{}
+		if qtyFloat == float64(int(qtyFloat)) {
+			qty = int(qtyFloat)
+		} else {
+			extraLines = append(extraLines, "Unit price: "+matches[2], "Qty: "+matches[3])
 		}
 		items = append(items, ParsedLineItem{
 			Description: strings.TrimSpace(matches[1]),
-			Quantity:    int(qtyFloat),
+			Extra:       strings.Join(extraLines, "\n"),
+			Quantity:    qty,
 			Amount:      matches[4],
 		})
 	}

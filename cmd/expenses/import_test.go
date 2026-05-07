@@ -159,3 +159,66 @@ func TestImportUpdateSelectionLabels(t *testing.T) {
 		t.Fatalf("importMatchSelectionFooter() = %q", got)
 	}
 }
+
+func TestApplyImportedExpensePayerOverride(t *testing.T) {
+	expense := &splitwise.DetailedExpense{
+		Cost: "42.50",
+		Users: []splitwise.ExpenseUser{
+			{UserID: 1, PaidShare: "42.50"},
+			{UserID: 2, PaidShare: "0.00"},
+			{UserID: 3, PaidShare: "0.00"},
+		},
+	}
+
+	if err := applyImportedExpensePayerOverride(expense, 3); err != nil {
+		t.Fatalf("applyImportedExpensePayerOverride() unexpected error: %v", err)
+	}
+	if expense.Users[0].PaidShare != "0.00" || expense.Users[1].PaidShare != "0.00" || expense.Users[2].PaidShare != "42.50" {
+		t.Fatalf("paid shares = %q / %q / %q, want 0.00 / 0.00 / 42.50", expense.Users[0].PaidShare, expense.Users[1].PaidShare, expense.Users[2].PaidShare)
+	}
+}
+
+func TestApplyImportedExpensePayerOverrideRejectsUnknownUser(t *testing.T) {
+	expense := &splitwise.DetailedExpense{
+		Cost: "10.00",
+		Users: []splitwise.ExpenseUser{
+			{UserID: 1, PaidShare: "10.00"},
+			{UserID: 2, PaidShare: "0.00"},
+		},
+	}
+
+	if err := applyImportedExpensePayerOverride(expense, 99); err == nil {
+		t.Fatalf("applyImportedExpensePayerOverride() expected error, got nil")
+	}
+}
+
+func TestResolveFriendPaidUserID(t *testing.T) {
+	expense := &splitwise.DetailedExpense{
+		Users: []splitwise.ExpenseUser{
+			{UserID: 7},
+			{UserID: 42},
+		},
+	}
+
+	got, err := resolveFriendPaidUserID(expense, 7)
+	if err != nil {
+		t.Fatalf("resolveFriendPaidUserID() unexpected error: %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("resolveFriendPaidUserID() = %d, want 42", got)
+	}
+}
+
+func TestResolveFriendPaidUserIDRejectsNonPairExpense(t *testing.T) {
+	expense := &splitwise.DetailedExpense{
+		Users: []splitwise.ExpenseUser{
+			{UserID: 7},
+			{UserID: 42},
+			{UserID: 99},
+		},
+	}
+
+	if _, err := resolveFriendPaidUserID(expense, 7); err == nil {
+		t.Fatalf("resolveFriendPaidUserID() expected error, got nil")
+	}
+}

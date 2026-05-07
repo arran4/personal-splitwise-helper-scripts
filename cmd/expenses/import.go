@@ -20,7 +20,7 @@ import (
 
 func handleImport(args []string) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: expenses import <doordash|bunnings|amazon|woolworths> email text [--mode auto|new|update] [--stdin] [--id <expense-id>] [--group-id <id>|--friend-id <id>]")
+		return fmt.Errorf("usage: expenses import <doordash|bunnings|amazon|woolworths> email text [--mode auto|new|update] [--stdin] [--id <expense-id>] [--group-id <id>|--friend-id <id>] [--payer <user-id>|--friend-paid]")
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(args[0]))
@@ -38,6 +38,8 @@ func handleImport(args []string) error {
 	id := importCmd.String("id", "", "Existing expense ID to update")
 	groupID := importCmd.Int("group-id", 0, "Create the imported expense in this group")
 	friendID := importCmd.Int("friend-id", 0, "Create the imported expense with this friend")
+	payerID := importCmd.Int("payer", 0, "Set which Splitwise user paid the full imported amount")
+	friendPaid := importCmd.Bool("friend-paid", false, "For two-person expenses, set the non-current user as the payer")
 	verbose := importCmd.Bool("verbose", false, "Print the full server success payload after send")
 	limit := importCmd.Int("limit", 20, "Number of recent expenses to fetch per page when resolving updates")
 	offset := importCmd.Int("offset", 0, "Initial offset when resolving updates")
@@ -48,6 +50,9 @@ func handleImport(args []string) error {
 	}
 	if *groupID != 0 && *friendID != 0 {
 		return fmt.Errorf("provide only one of --group-id or --friend-id")
+	}
+	if *payerID != 0 && *friendPaid {
+		return fmt.Errorf("provide only one of --payer or --friend-paid")
 	}
 
 	text, err := readImportText(*fromStdin)
@@ -154,6 +159,23 @@ func handleImport(args []string) error {
 
 	if err := applyImportedExpense(expense, parsed, updatedExisting); err != nil {
 		return err
+	}
+	if *friendPaid {
+		currentUser, err := getOrFetchCurrentUser()
+		if err != nil {
+			return fmt.Errorf("resolving current user for --friend-paid: %w", err)
+		}
+		resolvedPayerID, err := resolveFriendPaidUserID(expense, currentUser.ID)
+		if err != nil {
+			return err
+		}
+		if err := applyImportedExpensePayerOverride(expense, resolvedPayerID); err != nil {
+			return err
+		}
+	} else if *payerID != 0 {
+		if err := applyImportedExpensePayerOverride(expense, *payerID); err != nil {
+			return err
+		}
 	}
 
 	sent, sendResponse, err := tui.EditExpense(expense)
@@ -401,6 +423,44 @@ func applyImportedExpense(expense *splitwise.DetailedExpense, parsed *importers.
 	splitwise.AutoCorrectPaidShares(expense, previousTotal, newTotal)
 	splitwise.CalculateOwed(expense, newDetails)
 	return nil
+}
+
+func applyImportedExpensePayerOverride(expense *splitwise.DetailedExpense, payerUserID int) error {
+	if expense == nil {
+		return fmt.Errorf("expense is nil")
+	}
+	if payerUserID == 0 {
+		return fmt.Errorf("payer user id must be non-zero")
+	}
+
+	found := false
+	for i := range expense.Users {
+		if expense.Users[i].UserID == payerUserID {
+			expense.Users[i].PaidShare = expense.Cost
+			found = true
+		} else {
+			expense.Users[i].PaidShare = "0.00"
+		}
+	}
+	if !found {
+		return fmt.Errorf("payer user id %d is not part of this expense", payerUserID)
+	}
+	return nil
+}
+
+func resolveFriendPaidUserID(expense *splitwise.DetailedExpense, currentUserID int) (int, error) {
+	if expense == nil {
+		return 0, fmt.Errorf("expense is nil")
+	}
+	if len(expense.Users) != 2 {
+		return 0, fmt.Errorf("--friend-paid requires exactly 2 users on the expense")
+	}
+	for _, user := range expense.Users {
+		if user.UserID != currentUserID {
+			return user.UserID, nil
+		}
+	}
+	return 0, fmt.Errorf("--friend-paid could not find a non-current user on the expense")
 }
 
 func buildImportedDetails(expense *splitwise.DetailedExpense, parsed *importers.ParsedExpense, previousDetails *splitwise.ItemizedDetail, preserveExistingNotes bool) *splitwise.ItemizedDetail {

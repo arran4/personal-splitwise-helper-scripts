@@ -87,3 +87,31 @@ Estimated amount to be charged: 5.60`
 		t.Fatalf("ParseWoolworthsEmailText() expected error, got nil")
 	}
 }
+
+func TestParseWoolworthsEmailTextWeightedItems(t *testing.T) {
+	text := `Order number: 290282486
+Unit 1 123 Example Street, Example 3000
+Saturday, 31 January 2026
+between 2:00 pm - 3:00 pm
+Your Items
+Item description Unit price Qty Price
+Woolworths items
+Beans Round 6.90 0.25 1.73
+Fresh Skin On Barramundi Fillets 36.00 0.56 20.16
+Paper bags: 2.00
+Estimated amount to be charged: 23.89
+Paid with Credit Card: 23.89`
+
+	parsed, err := ParseWoolworthsEmailText(text)
+	if err != nil {
+		t.Fatalf("ParseWoolworthsEmailText() unexpected error: %v", err)
+	}
+	assertParsedLineItemsEqual(t, parsed.Items, []ParsedLineItem{
+		{Description: "Beans Round", Extra: "Unit price: 6.90\nQty: 0.25", Quantity: 1, Amount: "1.73"},
+		{Description: "Fresh Skin On Barramundi Fillets", Extra: "Unit price: 36.00\nQty: 0.56", Quantity: 1, Amount: "20.16"},
+	})
+	if len(parsed.Fees) != 1 || parsed.Fees[0].Amount != "2.00" {
+		t.Fatalf("fees = %+v", parsed.Fees)
+	}
+	assertTotalsMatch(t, parsed)
+}
