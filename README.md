@@ -103,7 +103,7 @@ Usage: user <get|show>
 ## Features
 - **Extensive Expenses Management:** You can quickly fetch, list, update, and manage your splitwise expenses directly from your terminal. Supports caching expenses.
 - **TUI-Based Edit/New Views:** With the edit and new commands, a Terminal UI is provided making it very easy to manage split calculations, details, category, dates, groups, friends, etc.
-- **Receipt Parsing (Imports):** Have a receipt from Amazon, Bunnings, Doordash, or Woolworths? Just pipe it into the `expenses import` command and it automatically parses the list of items for you.
+- **Receipt Parsing (Imports):** Have a receipt from Amazon, AussieBB, Bunnings, Doordash, or Woolworths? Just pipe it into the `expenses import` command and it automatically parses the list of items for you.
 - **Caching:** Automatically caches groups, friends, expenses, users, lowering the amount of API requests necessary.
 - **Minimal Dependencies:** The core functions operate entirely with pure Go libraries and only a select few specialized TUI components to remain highly performant.
 

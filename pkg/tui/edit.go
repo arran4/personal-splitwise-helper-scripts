@@ -27,7 +27,12 @@ func isFiniteNumber(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
-func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
+func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) (bool, []byte, error) {
+	config := &editExpenseConfig{}
+	for _, opt := range opts {
+		opt(config)
+	}
+
 	app := tview.NewApplication()
 	sent := false
 	var sendResponse []byte
