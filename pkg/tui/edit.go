@@ -78,16 +78,16 @@ func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) 
 		AddInputField("Description", expense.Description, 0, nil, func(text string) {
 			expense.Description = text
 		}).
-		AddInputField("Cost", expense.Cost, 20, nil, func(text string) {
+		AddInputField("Cost", expense.Cost, 0, nil, func(text string) {
 			expense.Cost = text
 		}).
-		AddInputField("Currency", expense.CurrencyCode, 10, nil, func(text string) {
+		AddInputField("Currency", expense.CurrencyCode, 0, nil, func(text string) {
 			expense.CurrencyCode = text
 		}).
-		AddInputField("Date", expense.Date, 25, nil, func(text string) {
+		AddInputField("Date", expense.Date, 0, nil, func(text string) {
 			expense.Date = text
 		}).
-		AddTextArea("Notes", notesText, 40, 5, 0, func(text string) {
+		AddTextArea("Notes", notesText, 0, 5, 0, func(text string) {
 			parsedDetails.Notes = text
 		})
 
@@ -173,7 +173,7 @@ func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) 
 			if i < len(initialValues) {
 				initVal = initialValues[i]
 			}
-			promptForm.AddInputField(f, initVal, 20, nil, nil)
+			promptForm.AddInputField(f, initVal, 0, nil, nil)
 		}
 		promptForm.AddButton("Save", func() {
 			var vals []string
