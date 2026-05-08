@@ -21,7 +21,7 @@ const CacheDir = ".cache"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: expenses <list|show|edit|new|import> [options]")
+		fmt.Println("Usage: expenses <list|show|edit|new|import|mock> [options]")
 		os.Exit(1)
 	}
 
@@ -258,6 +258,8 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "mock":
+		runMock()
 	default:
 		fmt.Println("Unknown command:", command)
 		os.Exit(1)

@@ -27,14 +27,19 @@ func isFiniteNumber(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
-func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
+func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) (bool, []byte, error) {
+	config := &editExpenseConfig{}
+	for _, opt := range opts {
+		opt(config)
+	}
+
 	app := tview.NewApplication()
 	sent := false
 	var sendResponse []byte
 
 	// Title
 	title := tview.NewTextView().
-		SetText(fmt.Sprintf("Editing Expense: %s (ID: %d)", expense.Description, expense.ID)).
+		SetText(fmt.Sprintf("Editing Expense: [yellow]%s[white] (ID: %d)", expense.Description, expense.ID)).
 		SetTextAlign(tview.AlignCenter).
 		SetDynamicColors(true)
 
@@ -70,19 +75,19 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 
 	// Basic Info Form
 	form := tview.NewForm().
-		AddInputField("Description", expense.Description, 40, nil, func(text string) {
+		AddInputField("Description", expense.Description, 0, nil, func(text string) {
 			expense.Description = text
 		}).
-		AddInputField("Cost", expense.Cost, 20, nil, func(text string) {
+		AddInputField("Cost", expense.Cost, 0, nil, func(text string) {
 			expense.Cost = text
 		}).
-		AddInputField("Currency", expense.CurrencyCode, 10, nil, func(text string) {
+		AddInputField("Currency", expense.CurrencyCode, 0, nil, func(text string) {
 			expense.CurrencyCode = text
 		}).
-		AddInputField("Date", expense.Date, 25, nil, func(text string) {
+		AddInputField("Date", expense.Date, 0, nil, func(text string) {
 			expense.Date = text
 		}).
-		AddTextArea("Notes", notesText, 40, 5, 0, func(text string) {
+		AddTextArea("Notes", notesText, 0, 5, 0, func(text string) {
 			parsedDetails.Notes = text
 		})
 
@@ -168,7 +173,7 @@ func EditExpense(expense *splitwise.DetailedExpense) (bool, []byte, error) {
 			if i < len(initialValues) {
 				initVal = initialValues[i]
 			}
-			promptForm.AddInputField(f, initVal, 20, nil, nil)
+			promptForm.AddInputField(f, initVal, 0, nil, nil)
 		}
 		promptForm.AddButton("Save", func() {
 			var vals []string
