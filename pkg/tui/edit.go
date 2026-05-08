@@ -39,7 +39,7 @@ func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) 
 
 	// Title
 	title := tview.NewTextView().
-		SetText(fmt.Sprintf("Editing Expense: %s (ID: %d)", expense.Description, expense.ID)).
+		SetText(fmt.Sprintf("Editing Expense: [yellow]%s[white] (ID: %d)", expense.Description, expense.ID)).
 		SetTextAlign(tview.AlignCenter).
 		SetDynamicColors(true)
 
@@ -75,7 +75,7 @@ func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) 
 
 	// Basic Info Form
 	form := tview.NewForm().
-		AddInputField("Description", expense.Description, 40, nil, func(text string) {
+		AddInputField("Description", expense.Description, 0, nil, func(text string) {
 			expense.Description = text
 		}).
 		AddInputField("Cost", expense.Cost, 20, nil, func(text string) {
