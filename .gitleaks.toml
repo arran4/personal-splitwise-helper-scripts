@@ -1,0 +1,7 @@
+title = "repo gitleaks config"
+
+[allowlist]
+description = "global allowlist"
+paths = [
+  '''^docs/'''
+]

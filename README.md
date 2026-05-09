@@ -114,3 +114,21 @@ Usage: user <get|show>
 
 ### Terminal UI (Edit / New / Mock)
 ![TUI Edit Expense](docs/edit.gif)
+
+## Install
+
+### GitHub Releases
+Download binaries from: https://github.com/arran4/personal-splitwise-helper-scripts/releases
+
+### Go install
+go install github.com/arran4/personal-splitwise-helper-scripts/cmd/expenses@latest
+go install github.com/arran4/personal-splitwise-helper-scripts/cmd/friends@latest
+go install github.com/arran4/personal-splitwise-helper-scripts/cmd/groups@latest
+go install github.com/arran4/personal-splitwise-helper-scripts/cmd/token@latest
+go install github.com/arran4/personal-splitwise-helper-scripts/cmd/user@latest
+
+### Native packages
+- Debian/Ubuntu (`.deb`): see Releases assets
+- RPM (`.rpm`): see Releases assets
+- Alpine (`.apk`): see Releases assets
+- Arch (`.pkg.tar.zst` or repo): see Releases assets
