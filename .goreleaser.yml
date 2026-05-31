@@ -1,0 +1,41 @@
+project_name: personal-splitwise-helper-scripts
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: expenses
+    binary: expenses
+    main: ./cmd/expenses
+    env:
+      - CGO_ENABLED=0
+  - id: friends
+    binary: friends
+    main: ./cmd/friends
+    env:
+      - CGO_ENABLED=0
+  - id: groups
+    binary: groups
+    main: ./cmd/groups
+    env:
+      - CGO_ENABLED=0
+  - id: token
+    binary: token
+    main: ./cmd/token
+    env:
+      - CGO_ENABLED=0
+  - id: user
+    binary: user
+    main: ./cmd/user
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
