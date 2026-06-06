@@ -40,7 +40,7 @@ func main() {
 		offset := listCmd.Int("offset", 0, "Initial offset")
 		pages := listCmd.String("pages", "", "Page selection: N, N-M, N-, or all")
 
-		listCmd.Parse(os.Args[2:])
+		_ = listCmd.Parse(os.Args[2:])
 
 		allExpenses, err := fetchExpensesPageSet(expenseListOptions{
 			groupID:       *groupID,
@@ -72,7 +72,7 @@ func main() {
 		id := showCmd.String("id", "", "ID of the expense to show")
 		refresh := showCmd.Bool("refresh", false, "Force refresh from API instead of using cache")
 
-		showCmd.Parse(os.Args[2:])
+		_ = showCmd.Parse(os.Args[2:])
 
 		if *id == "" {
 			fmt.Println("Please provide an expense ID via --id")
@@ -153,7 +153,7 @@ func main() {
 		offset := editCmd.Int("offset", 0, "Initial offset when selecting a recent expense")
 		pages := editCmd.String("pages", "", "Page selection for recent expense chooser: N, N-M, N-, or all")
 
-		editCmd.Parse(os.Args[2:])
+		_ = editCmd.Parse(os.Args[2:])
 
 		if *id == "" {
 			selectedID, err := chooseRecentExpense(expenseListOptions{
@@ -210,7 +210,7 @@ func main() {
 		friendID := newCmd.Int("friend-id", 0, "Create the expense with this friend")
 		verbose := newCmd.Bool("verbose", false, "Print the full server success payload after send")
 
-		newCmd.Parse(os.Args[2:])
+		_ = newCmd.Parse(os.Args[2:])
 
 		if *groupID != 0 && *friendID != 0 {
 			fmt.Println("Provide only one of --group-id or --friend-id")

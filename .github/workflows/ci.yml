@@ -227,18 +227,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Template-time toggles (set these once for the repo; avoid broad auto-detection)
-      export EXPECT_GO=true
-      export EXPECT_NODE=false
-      export EXPECT_DART=false
-      export EXPECT_FLUTTER=false
-      export EXPECT_QT_CPP=false
-      export EXPECT_MAKE_C=false
-      export EXPECT_DOCKER=false
-      export EXPECT_GORELEASER=true
-
       - id: detect
         shell: bash
+        env:
+          # Template-time toggles (set these once for the repo; avoid broad auto-detection)
+          EXPECT_GO: true
+          EXPECT_NODE: false
+          EXPECT_DART: false
+          EXPECT_FLUTTER: false
+          EXPECT_QT_CPP: false
+          EXPECT_MAKE_C: false
+          EXPECT_DOCKER: false
+          EXPECT_GORELEASER: true
         run: |
           set -euo pipefail
           # Keep this minimal: most language choices should be decided at workflow install/customization time.
@@ -300,9 +300,10 @@ jobs:
         with:
           go-version-file: go.mod
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          install-mode: goinstall
 
   go-test:
     name: Go lint/test (${{ matrix.os }})

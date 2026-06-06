@@ -349,38 +349,6 @@ func parseWeightedAmountsSharedWith(s string, totalCents int) []string {
 	return people
 }
 
-func serializeSharedWith(sharedWith []string, totalAmount float64, qty int) string {
-	counts := make(map[string]int)
-	var ordered []string
-	for _, person := range sharedWith {
-		if counts[person] == 0 {
-			ordered = append(ordered, person)
-		}
-		counts[person]++
-	}
-
-	var parts []string
-	if len(sharedWith) == qty {
-		for _, person := range ordered {
-			if counts[person] > 1 {
-				parts = append(parts, fmt.Sprintf("%s*%d", person, counts[person]))
-				continue
-			}
-			parts = append(parts, person)
-		}
-		return strings.Join(parts, ", ")
-	}
-
-	if len(sharedWith) == 0 {
-		return ""
-	}
-	shareValue := totalAmount / float64(len(sharedWith))
-	for _, person := range ordered {
-		parts = append(parts, fmt.Sprintf("%s $%.2f", person, shareValue*float64(counts[person])))
-	}
-	return strings.Join(parts, ", ")
-}
-
 func serializeItemLines(item Item) []string {
 	description := strings.TrimSpace(item.Description)
 	amount := strings.TrimSpace(item.Amount)

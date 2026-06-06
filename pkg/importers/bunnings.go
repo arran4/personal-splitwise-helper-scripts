@@ -219,8 +219,6 @@ func buildBunningsNotes(lines, locations []string) string {
 			}
 		}
 	}
-	for _, location := range locations {
-		notes = append(notes, location)
-	}
+	notes = append(notes, locations...)
 	return strings.Join(notes, "\n")
 }

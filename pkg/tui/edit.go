@@ -128,7 +128,7 @@ func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) 
 		modal := tview.NewModal().
 			SetText(message).
 			AddButtons([]string{"Close"}).
-			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			SetDoneFunc(func(_ int, _ string) {
 				pages.RemovePage("message_modal")
 				isModalOpen = false
 				setFocus(previousFocus)
@@ -1125,7 +1125,7 @@ func EditExpense(expense *splitwise.DetailedExpense, opts ...EditExpenseOption) 
 
 	refreshItemsTable()
 
-	itemsTable.SetSelectedFunc(func(row, column int) {
+	itemsTable.SetSelectedFunc(func(row, _ int) {
 		if action, ok := rowActions[row]; ok {
 			action()
 		}
