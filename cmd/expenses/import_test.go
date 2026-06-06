@@ -100,11 +100,11 @@ func TestImportedExpenseMatchScore(t *testing.T) {
 		Items:    []importers.ParsedLineItem{{Description: "Item", Quantity: 1, Amount: "1.00"}},
 	}
 	best := splitwise.Expense{ID: 1, Description: "ALDI", Cost: "54.05"}
-	close := splitwise.Expense{ID: 2, Description: "ALDI Croydon", Cost: "48.00"}
+	closeExpense := splitwise.Expense{ID: 2, Description: "ALDI Croydon", Cost: "48.00"}
 	weak := splitwise.Expense{ID: 3, Description: "Woolworths", Cost: "54.05"}
 
 	bestScore := importedExpenseMatchScore(parsed, best)
-	closeScore := importedExpenseMatchScore(parsed, close)
+	closeScore := importedExpenseMatchScore(parsed, closeExpense)
 	weakScore := importedExpenseMatchScore(parsed, weak)
 
 	if bestScore <= closeScore {

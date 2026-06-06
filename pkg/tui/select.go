@@ -463,8 +463,7 @@ func SelectTableOption(title string, headers []string, options []TableSelectionO
 		}
 	}
 
-	var refreshTable func(query string)
-	refreshTable = func(query string) {
+	refreshTable := func(query string) {
 		current = filterTableSelectionOptions(options, query)
 		rowIndex = map[int]int{}
 		table.Clear()

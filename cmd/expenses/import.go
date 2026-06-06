@@ -359,7 +359,7 @@ func importedExpenseMatchScore(parsed *importers.ParsedExpense, expense splitwis
 		case diff < 0.001:
 			score += 2
 		case diff <= 1.00:
-			score += 1
+			score++
 		case diff <= 5.00:
 			score += 0.25
 		}
